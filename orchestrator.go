@@ -43,7 +43,7 @@ func (o *Orchestrator) FindUWSCRPath() (string, error) {
 		return path, nil
 	}
 
-	return "", fmt.Errorf("uwscr.exe が見つかりません。アプリの同階層に配置するか、設定からパスを指定してください。")
+	return "", fmt.Errorf("uwscr.exe が見つかりません。本家UWSCR配布ページ (https://github.com/stuncloud/UWSCR/releases) からダウンロードし、本エージェント (act-gram.exe) と同じディレクトリに配置するか、設定からパスを指定してください。")
 }
 
 // RunScript は指定された UWS スクリプトをトランスパイルして非同期実行します。
