@@ -4,17 +4,21 @@ import (
 	"act_gram/llm"
 	"context"
 	"fmt"
+	"net/http"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
-	cfg *Config
+	ctx         context.Context
+	cfg         *Config
+	localServer *LocalServer
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	a := &App{}
+	a.localServer = NewLocalServer(a)
+	return a
 }
 
 // startup is called when the app starts. The context is saved
@@ -26,6 +30,22 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("failed to load config: %v\n", err)
 	}
 	a.cfg = cfg
+
+	// ローカルAPIサーバーをGoroutineで非同期起動
+	go func() {
+		err := a.localServer.Start(a.cfg.Port)
+		if err != nil && err != http.ErrServerClosed {
+			fmt.Printf("Local API Server error: %v\n", err)
+		}
+	}()
+}
+
+// shutdown is called when the app is closing.
+func (a *App) shutdown(ctx context.Context) {
+	if a.localServer != nil {
+		fmt.Println("Shutting down Local API Server...")
+		a.localServer.Shutdown()
+	}
 }
 
 // GetConfig は現在の設定をフロントエンドに返します
