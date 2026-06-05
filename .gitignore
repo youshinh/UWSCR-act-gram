@@ -1,0 +1,10 @@
+build/bin
+node_modules
+frontend/dist
+frontend/node_modules/
+uwscr_src/
+config.yaml
+temp_exec.uws
+*.exe
+*.log
+.system_generated/
