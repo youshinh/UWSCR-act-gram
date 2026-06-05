@@ -18,8 +18,8 @@ func TestTranspile(t *testing.T) {
 			input: `Dim res = AI_EVAL("この伝票の合計金額は？")`,
 			expected: []string{
 				`POWERSHELL(`,
-				`curl -s -X POST http://127.0.0.1:31415/ai_eval`,
-				`{\""prompt\"":\""この伝票の合計金額は？\""}`,
+				`curl.exe -s -X POST http://127.0.0.1:31415/ai_eval`,
+				`-d '{\""prompt\"":\""この伝票の合計金額は？\""}'`,
 			},
 		},
 		{
@@ -27,16 +27,16 @@ func TestTranspile(t *testing.T) {
 			input: `Dim res = AI_EVAL("金額を読み取って", GetScreenCapture())`,
 			expected: []string{
 				`POWERSHELL(`,
-				`curl -s -X POST http://127.0.0.1:31415/ai_eval`,
-				`{\""prompt\"":\""金額を読み取って\""`,
-				`+ REPLACE(GetScreenCapture(), "\", "\\")`,
+				`curl.exe -s -X POST http://127.0.0.1:31415/ai_eval`,
+				`-d '{\""prompt\"":\""金額を読み取って\"",\""image_path\"":\""`,
+				`+ REPLACE(GetScreenCapture(), ""\"", ""\\"" )`,
 			},
 		},
 		{
 			name:  "AI_EVAL with path variable",
 			input: `Dim res = AI_EVAL("解析して", img_path)`,
 			expected: []string{
-				`+ REPLACE(img_path, "\", "\\")`,
+				`+ REPLACE(img_path, ""\"", ""\\"" )`,
 			},
 		},
 	}

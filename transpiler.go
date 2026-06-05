@@ -70,7 +70,6 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 		for i := 0; i < len(argsStr); i++ {
 			char := argsStr[i]
 			if char == '"' {
-				// 単純なクォーテーションのトグル (エスケープは簡略化)
 				if i == 0 || argsStr[i-1] != '\\' {
 					inQuotes = !inQuotes
 				}
@@ -92,7 +91,6 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 
 		// トランスパイルの適用
 		if len(args) > 0 {
-			// 第1引数 (プロンプト)。前後のダブルクォーテーションを剥ぎ取る
 			prompt := args[0]
 			if len(prompt) >= 2 && prompt[0] == '"' && prompt[len(prompt)-1] == '"' {
 				prompt = prompt[1 : len(prompt)-1]
@@ -105,18 +103,19 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 			}
 
 			if imageExpr != "" {
-				// 画像あり
+				// 画像あり (DOSCMD)
+				// Windows cmd.exeのパース仕様に合わせ、\" でエスケープしたダブルクォーテーションでJSONを囲む
 				transpiled := fmt.Sprintf(
-					"POWERSHELL(\"curl -s -X POST http://127.0.0.1:%d/ai_eval -H \"\"Content-Type: application/json\"\" -d \"\"{\\\"\"prompt\\\"\":\\\"\"%s\\\"\",\\\"\"image_path\\\"\":\\\"\"\" + REPLACE(%s, \"\\\", \"\\\\\") + \"\\\"\"}\"\"\", true)",
+					`DOSCMD("curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H ""Content-Type: application/json"" -d ""{\""prompt\"":\""%s\"",\""image_path\"":\""\"" + REPLACE(%s, ""\"", ""\\"" ) + ""\""}""", true)`,
 					t.port,
 					escapedPrompt,
 					imageExpr,
 				)
 				result.WriteString(transpiled)
 			} else {
-				// 画像なし
+				// 画像なし (DOSCMD)
 				transpiled := fmt.Sprintf(
-					"POWERSHELL(\"curl -s -X POST http://127.0.0.1:%d/ai_eval -H \"\"Content-Type: application/json\"\" -d \"\"{\\\"\"prompt\\\"\":\\\"\"%s\\\"\"}\"\"\", true)",
+					`DOSCMD("curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H ""Content-Type: application/json"" -d ""{\""prompt\"":\""%s\""}""", true)`,
 					t.port,
 					escapedPrompt,
 				)

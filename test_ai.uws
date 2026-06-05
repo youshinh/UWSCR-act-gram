@@ -1,0 +1,8 @@
+// UWSCR::act-gram テキストAI機能テスト
+Dim result_txt = AI_EVAL("1 + 1 は何ですか？数字だけで答えてください。")
+PRINT "AI Result (Text): " + result_txt
+
+// 画像AI機能テスト
+// act-gramのビルド用アプリアイコンを参照
+Dim result_img = AI_EVAL("この画像の背景は何色ですか？簡潔に答えてください。", "build/appicon.png")
+PRINT "AI Result (Image): " + result_img

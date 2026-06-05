@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -54,20 +55,37 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req AIRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Read body error", http.StatusBadRequest)
 		return
 	}
 
-	// 1. 設定情報の取得
+	var req AIRequest
+	// 1. 通常のパース
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		// 2. Windowsコマンドラインのエスケープ問題（全体がエスケープ付きの文字列として送られてくる）へのフォールバック
+		var jsonStr string
+		if errStr := json.Unmarshal(bodyBytes, &jsonStr); errStr == nil {
+			// ネストされたJSON文字列を再度パース
+			if errRetry := json.Unmarshal([]byte(jsonStr), &req); errRetry != nil {
+				http.Error(w, fmt.Sprintf("Failed to parse nested JSON: %v", errRetry), http.StatusBadRequest)
+				return
+			}
+		} else {
+			http.Error(w, fmt.Sprintf("Invalid JSON: %v. Body: %s", err, string(bodyBytes)), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// 3. 設定情報の取得
 	cfg, err := LoadConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// 2. レイヤーの決定 (画像がある場合は Eye層、ない場合は Brain層)
+	// 4. レイヤーの決定 (画像がある場合は Eye層、ない場合は Brain層)
 	layerName := "brain"
 	if req.ImagePath != "" {
 		layerName = "eye"
@@ -79,14 +97,14 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. APIキーのセキュア取得
+	// 5. APIキーのセキュア取得
 	apiKey, err := GetAPIKey(layerConfig.Provider)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get API key: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// 4. LLMプロバイダーの初期化と実行
+	// 6. LLMプロバイダーの初期化と実行
 	var provider llm.LLMProvider
 	switch layerConfig.Provider {
 	case "google":
@@ -100,7 +118,7 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. LLM推論の実行
+	// 7. LLM推論の実行
 	fmt.Printf("[Local API] Executing prompt via layer '%s' (%s - %s). Image: %s\n", 
 		layerName, layerConfig.Provider, layerConfig.Model, req.ImagePath)
 	
@@ -110,7 +128,7 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. テキストレスポンス返却 (UWSCRで受け取るためプレーンテキストで返却)
+	// 8. テキストレスポンス返却 (UWSCRで受け取るためプレーンテキストで返却)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(resp.Text))
