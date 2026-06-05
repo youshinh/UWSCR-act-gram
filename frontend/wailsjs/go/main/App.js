@@ -14,10 +14,18 @@ export function HasAPIKey(arg1) {
   return window['go']['main']['App']['HasAPIKey'](arg1);
 }
 
+export function RunScript(arg1) {
+  return window['go']['main']['App']['RunScript'](arg1);
+}
+
 export function SaveAPIKey(arg1, arg2) {
   return window['go']['main']['App']['SaveAPIKey'](arg1, arg2);
 }
 
 export function SaveConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveConfig'](arg1, arg2, arg3);
+}
+
+export function SaveUWSCRPath(arg1) {
+  return window['go']['main']['App']['SaveUWSCRPath'](arg1);
 }

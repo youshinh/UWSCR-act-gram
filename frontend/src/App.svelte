@@ -3,6 +3,7 @@
   import { GetConfig } from '../wailsjs/go/main/App.js';
   import CredentialInput from './components/CredentialInput.svelte';
   import LayerConfig from './components/LayerConfig.svelte';
+  import Console from './components/Console.svelte';
 
   let config = null;
   let isLoading = true;
@@ -65,10 +66,7 @@
       {:else if activeTab === 'config'}
         <LayerConfig />
       {:else}
-        <div class="card placeholder-card">
-          <h2>🚧 開発中 (Phase 4 & 5)</h2>
-          <p>このセクションは現在構築中です。次のフェーズで実装されます。</p>
-        </div>
+        <Console />
       {/if}
     {/if}
   </div>

@@ -9,15 +9,17 @@ import (
 
 // App struct
 type App struct {
-	ctx         context.Context
-	cfg         *Config
-	localServer *LocalServer
+	ctx          context.Context
+	cfg          *Config
+	localServer  *LocalServer
+	orchestrator *Orchestrator
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	a := &App{}
 	a.localServer = NewLocalServer(a)
+	a.orchestrator = NewOrchestrator(a)
 	return a
 }
 
@@ -135,4 +137,25 @@ func (a *App) FetchModels(provider string) ([]string, error) {
 	default:
 		return []string{}, nil
 	}
+}
+
+// RunScript は指定されたパスのスクリプトをトランスパイルして非同期実行します
+func (a *App) RunScript(scriptPath string) error {
+	if a.orchestrator == nil {
+		return fmt.Errorf("orchestrator is not initialized")
+	}
+	return a.orchestrator.RunScript(scriptPath)
+}
+
+// SaveUWSCRPath は明示的な UWSCRPath を保存します
+func (a *App) SaveUWSCRPath(path string) error {
+	if a.cfg == nil {
+		var err error
+		a.cfg, err = LoadConfig()
+		if err != nil {
+			return err
+		}
+	}
+	a.cfg.UWSCRPath = path
+	return SaveConfig(a.cfg)
 }

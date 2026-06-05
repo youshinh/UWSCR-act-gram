@@ -8,6 +8,10 @@ export function GetConfig():Promise<main.Config>;
 
 export function HasAPIKey(arg1:string):Promise<boolean>;
 
+export function RunScript(arg1:string):Promise<void>;
+
 export function SaveAPIKey(arg1:string,arg2:string):Promise<void>;
 
 export function SaveConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SaveUWSCRPath(arg1:string):Promise<void>;
