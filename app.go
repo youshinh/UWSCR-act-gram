@@ -1,7 +1,10 @@
 package main
 
 import (
+	"act_gram/capture"
+	"act_gram/knowledge"
 	"act_gram/llm"
+	"act_gram/manual"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -19,11 +22,15 @@ import (
 
 // App struct
 type App struct {
-	ctx          context.Context
-	cfg          *Config
-	localServer  *LocalServer
-	orchestrator *Orchestrator
-	mu           sync.Mutex
+	ctx            context.Context
+	cfg            *Config
+	localServer    *LocalServer
+	orchestrator   *Orchestrator
+	mu             sync.Mutex
+	rag            *knowledge.RAGManager
+	slicer         *manual.AutoSlicer
+	session        *manual.ManualSession
+	refactorEngine *llm.RefactorEngine
 }
 
 // NewApp creates a new App application struct
@@ -32,6 +39,9 @@ func NewApp() *App {
 	a := &App{}
 	a.localServer = NewLocalServer(a)
 	a.orchestrator = NewOrchestrator(a)
+	a.slicer = manual.NewAutoSlicer()
+	a.session = manual.NewManualSession()
+	a.refactorEngine = llm.NewRefactorEngine()
 	return a
 }
 
@@ -45,6 +55,14 @@ func (a *App) startup(ctx context.Context) {
 		log.Printf("[App.startup] Failed to load config: %v", err)
 	}
 	a.cfg = cfg
+
+	// RAGマネージャーの初期化（exe配信時を考慮したパス解決）
+	knowledgeDir := filepath.Join(a.getExecBaseDir(), "knowledge")
+	log.Printf("[App.startup] Initializing RAG manager with knowledge folder: %s", knowledgeDir)
+	a.rag = knowledge.NewRAGManager(knowledgeDir)
+	if err := a.rag.LoadKnowledgeFiles(); err != nil {
+		log.Printf("[App.startup] Failed to load knowledge files: %v", err)
+	}
 
 	// ローカルAPIサーバーをGoroutineで非同期起動
 	go func() {
@@ -683,4 +701,299 @@ func (a *App) SelectSaveFile(title string, defaultName string, displayName strin
 	}
 	log.Printf("[App.SelectSaveFile] User selected: %s", selected)
 	return selected, nil
+}
+
+// getExecBaseDir は実行ファイルの位置（開発環境ならcwd）を基準としたベースディレクトリを解決します
+func (a *App) getExecBaseDir() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		wd, _ := os.Getwd()
+		return wd
+	}
+	dir := filepath.Dir(exePath)
+	// Tempフォルダやwails開発ビルド内であれば、cwd（プロジェクトルート）を基準とする
+	if strings.Contains(dir, "Temp") || strings.Contains(dir, "wails") || strings.Contains(dir, "Appdata") {
+		wd, _ := os.Getwd()
+		return wd
+	}
+
+	// フォールバック: exePathと同じ階層に manual がない場合
+	if _, err := os.Stat(filepath.Join(dir, "manual")); err != nil {
+		// cwdを確認
+		wd, _ := os.Getwd()
+		if _, err := os.Stat(filepath.Join(wd, "manual")); err == nil {
+			return wd
+		}
+		// 親の親（build/bin から見たプロジェクトルート）を確認
+		parentOfParent := filepath.Dir(filepath.Dir(dir))
+		if _, err := os.Stat(filepath.Join(parentOfParent, "manual")); err == nil {
+			return parentOfParent
+		}
+	}
+	return dir
+}
+
+// GenerateScenarioFromLog はレコーダー生ログからスライス・シナリオとコードを自律生成します
+func (a *App) GenerateScenarioFromLog(logDir string) ([]manual.ManualStep, error) {
+	log.Printf("[App.GenerateScenarioFromLog] Request received. logDir=%s", logDir)
+	if a.cfg == nil {
+		return nil, fmt.Errorf("設定がロードされていません")
+	}
+
+	// RAGコンテキストの取得
+	ragContext := ""
+	if a.rag != nil {
+		ragContext = a.rag.SearchRelevantContext("UWSCR code logic generation manual scenario", 3)
+	}
+
+	// LLMプロバイダーの取得
+	brainConfig, ok := a.cfg.Layers["brain"]
+	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
+		brainConfig = LayerConfig{
+			Provider: "google",
+			Model:    "gemini-flash-lite-latest",
+		}
+	}
+	providerName := brainConfig.Provider
+	model := brainConfig.Model
+	apiKey, err := GetAPIKey(providerName)
+	if err != nil && providerName != "ollama" {
+		return nil, fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	}
+
+	var llmProvider llm.LLMProvider
+	switch providerName {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "ollama":
+		llmProvider = llm.NewOllamaProvider()
+	default:
+		return nil, fmt.Errorf("未サポートのプロバイダーです: %s", providerName)
+	}
+
+	steps, err := a.slicer.SliceLogToScenario(logDir, ragContext, llmProvider, model)
+	if err != nil {
+		log.Printf("[App.GenerateScenarioFromLog] Error slicing log: %v", err)
+		return nil, err
+	}
+
+	// Bake click markers into step images
+	for i := range steps {
+		if steps[i].ClickX > 0 && steps[i].ClickY > 0 && steps[i].ImagePath != "" {
+			markedPath, err := a.DrawMarker(steps[i].ImagePath, steps[i].ClickX, steps[i].ClickY)
+			if err == nil {
+				steps[i].ImagePath = markedPath
+			}
+		}
+	}
+
+	a.session.Steps = steps
+	return steps, nil
+}
+
+// ExecuteStep はマニュアル並走における特定のステップを同期実行します
+func (a *App) ExecuteStep(stepIdx int) (*manual.ManualStep, error) {
+	log.Printf("[App.ExecuteStep] Executing step index: %d", stepIdx)
+	if a.orchestrator == nil {
+		return nil, fmt.Errorf("orchestrator is not initialized")
+	}
+
+	runSyncHelper := func(code string) (string, bool, error) {
+		tempDir := os.TempDir()
+		tempFile := filepath.Join(tempDir, fmt.Sprintf("act_gram_step_exec_%d.uws", time.Now().UnixNano()))
+		if err := os.WriteFile(tempFile, []byte(code), 0644); err != nil {
+			return "", false, err
+		}
+		defer os.Remove(tempFile)
+
+		return a.orchestrator.RunScriptSync(tempFile, 15)
+	}
+
+	step, err := a.session.ExecuteStep(stepIdx, runSyncHelper)
+	if err != nil {
+		log.Printf("[App.ExecuteStep] Execution failed: %v", err)
+		return nil, err
+	}
+	return step, nil
+}
+
+// AskManualContext はマニュアルに紐づく質問に対してRAGと画面キャプチャをベースに推論回答します
+func (a *App) AskManualContext(question, imagePath string) (string, error) {
+	log.Printf("[App.AskManualContext] Question received. ImagePath=%s", imagePath)
+	if a.cfg == nil {
+		return "", fmt.Errorf("設定がロードされていません")
+	}
+
+	// 1. RAG知識検索
+	ragContext := ""
+	if a.rag != nil {
+		ragContext = a.rag.SearchRelevantContext(question, 3)
+	}
+
+	// 2. LLMプロバイダーの取得
+	brainConfig, ok := a.cfg.Layers["brain"]
+	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
+		brainConfig = LayerConfig{
+			Provider: "google",
+			Model:    "gemini-flash-lite-latest",
+		}
+	}
+	providerName := brainConfig.Provider
+	model := brainConfig.Model
+	apiKey, err := GetAPIKey(providerName)
+	if err != nil && providerName != "ollama" {
+		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	}
+
+	var llmProvider llm.LLMProvider
+	switch providerName {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "ollama":
+		llmProvider = llm.NewOllamaProvider()
+	default:
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", providerName)
+	}
+
+	systemPrompt := `あなたは優秀なRPAコパイロットAIエージェントです。
+指示された画像、ユーザーからの質問、および以下の現場業務知識コンテキスト（RAG）をもとに、業務に即した的確な回答を行ってください。
+
+【現場業務知識コンテキスト（RAG）】
+` + ragContext + `
+
+【回答ガイドライン】
+- 専門用語や社内ルールをふまえ、現場担当者がわかりやすい日本語で簡潔に回答してください。
+- 必要に応じて、現在の画面（画像）の状態が良いか悪いかを画像認識した上で判定してください。
+- 最後の回答は日本語を返してください。
+`
+
+	finalPrompt := fmt.Sprintf("%s\n\n【ユーザーの質問】\n%s", systemPrompt, question)
+	resp := llmProvider.GenerateText(finalPrompt, imagePath, model)
+	if resp.Error != nil {
+		return "", resp.Error
+	}
+	return resp.Text, nil
+}
+
+// ProposeOptimization は実行ログ（ミリ秒）からコード最適化を提案します
+func (a *App) ProposeOptimization(scriptPath string, eventsJSON string) (string, error) {
+	log.Println("[App.ProposeOptimization] Processing optimization proposal request")
+	if a.cfg == nil {
+		return "", fmt.Errorf("設定がロードされていません")
+	}
+
+	var code string
+	if _, err := os.Stat(scriptPath); err == nil {
+		data, err := os.ReadFile(scriptPath)
+		if err != nil {
+			return "", fmt.Errorf("スクリプトファイルの読み込みに失敗しました: %v", err)
+		}
+		code = string(data)
+	} else {
+		// Fallback: If it's not a file path, treat as raw code
+		code = scriptPath
+	}
+
+	var events []llm.ExecutionEvent
+	if err := json.Unmarshal([]byte(eventsJSON), &events); err != nil {
+		return "", fmt.Errorf("ファクトログJSONのパースに失敗しました: %v", err)
+	}
+
+	ragContext := ""
+	if a.rag != nil {
+		ragContext = a.rag.SearchRelevantContext("UWSCR code optimization performance concurrency", 3)
+	}
+
+	brainConfig, ok := a.cfg.Layers["brain"]
+	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
+		brainConfig = LayerConfig{
+			Provider: "google",
+			Model:    "gemini-flash-lite-latest",
+		}
+	}
+	providerName := brainConfig.Provider
+	model := brainConfig.Model
+	apiKey, err := GetAPIKey(providerName)
+	if err != nil && providerName != "ollama" {
+		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	}
+
+	var llmProvider llm.LLMProvider
+	switch providerName {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "ollama":
+		llmProvider = llm.NewOllamaProvider()
+	default:
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", providerName)
+	}
+
+	result, err := a.refactorEngine.ProposeOptimization(code, events, ragContext, llmProvider, model)
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+// DrawMarker は指定の座標に赤丸マークを上書き描画した画像を生成し、そのフルパスを返します
+func (a *App) DrawMarker(imagePath string, x, y int) (string, error) {
+	log.Printf("[App.DrawMarker] Request. ImagePath=%s, X=%d, Y=%d", imagePath, x, y)
+	if imagePath == "" {
+		return "", fmt.Errorf("画像パスが空です")
+	}
+
+	ext := filepath.Ext(imagePath)
+	if ext == "" {
+		ext = ".png"
+	}
+
+	dir := filepath.Dir(imagePath)
+	filename := filepath.Base(imagePath)
+	outFilename := fmt.Sprintf("marked_%d_%s", time.Now().UnixNano(), filename)
+	outputPath := filepath.Join(dir, outFilename)
+
+	err := capture.DrawClickMarker(imagePath, outputPath, x, y)
+	if err != nil {
+		log.Printf("[App.DrawMarker] Drawing click marker failed: %v", err)
+		return "", err
+	}
+
+	log.Printf("[App.DrawMarker] Marked image created successfully: %s", outputPath)
+	return outputPath, nil
+}
+
+// GetImageBase64 は指定された画像ファイルを読み込み、Base64エンコードしたデータURL文字列を返します
+func (a *App) GetImageBase64(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[App.GetImageBase64] Error reading image: %v", err)
+		return "", err
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	mimeType := "image/png"
+	switch ext {
+	case ".jpg", ".jpeg":
+		mimeType = "image/jpeg"
+	case ".gif":
+		mimeType = "image/gif"
+	case ".webp":
+		mimeType = "image/webp"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+// RunInteractiveGuide は act_gram_guide/interactive_guide.uws を非同期実行します
+func (a *App) RunInteractiveGuide() error {
+	guidePath := filepath.Join(a.getExecBaseDir(), "manual", "act_gram_guide", "interactive_guide.uws")
+	log.Printf("[App.RunInteractiveGuide] Preparing to run guide script: %s", guidePath)
+	return a.RunScript(guidePath)
 }

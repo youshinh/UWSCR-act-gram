@@ -16,6 +16,7 @@ func NewTranspiler(port int) *Transpiler {
 
 // Transpile はスクリプトテキストを受け取り、AI_EVALマクロを置換して返します。
 func (t *Transpiler) Transpile(script string) (string, error) {
+	script = replaceNewlinesInStrings(script)
 	var result strings.Builder
 	currentIndex := 0
 
@@ -127,4 +128,29 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 	}
 
 	return result.String(), nil
+}
+
+func replaceNewlinesInStrings(script string) string {
+	var result strings.Builder
+	inQuotes := false
+	escaped := false
+
+	for i := 0; i < len(script); i++ {
+		char := script[i]
+		if char == '"' && !escaped {
+			inQuotes = !inQuotes
+			result.WriteByte(char)
+		} else if inQuotes && char == '\\' && i+1 < len(script) && script[i+1] == 'n' {
+			result.WriteString("<#CR>")
+			i++ // skip 'n'
+		} else {
+			if char == '\\' && !escaped {
+				escaped = true
+			} else {
+				escaped = false
+			}
+			result.WriteByte(char)
+		}
+	}
+	return result.String()
 }

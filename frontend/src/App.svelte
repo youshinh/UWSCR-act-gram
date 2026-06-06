@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
-  import { GetConfig, SaveUWSCRPath, SelectFile } from '../wailsjs/go/main/App.js';
+  import { GetConfig, SaveUWSCRPath, SelectFile, RunInteractiveGuide, GetDefaultManualPath, GetImageBase64 } from '../wailsjs/go/main/App.js';
   import CredentialInput from './components/CredentialInput.svelte';
   import LayerConfig from './components/LayerConfig.svelte';
   import Console from './components/Console.svelte';
@@ -13,8 +13,37 @@
   let activeTab = 'run'; // Default to daily execution tab
   let isLightMode = false;
   let showSettingsDrawer = false;
+  let showHelpDrawer = false;
   let selectedLanguage = 'ja';
   let uwscrPath = '';
+
+  let isRunningGuide = false;
+  let guideError = '';
+  let guideSuccess = '';
+
+  let manualSteps = [
+    {
+      step: 1,
+      title: "APIキーとUWSCRの設定",
+      desc: "act-gramを起動したら、まずは画面右上の「設定」ギアアイコンをクリックして設定ドロワーを開きます。ご自身のGoogle/Gemini等のAPIキーを設定し、uwscr.exeのパス（未指定時は自動探索）を確認・保存してください。",
+      imgKey: "step_1.png",
+      imgSrc: ""
+    },
+    {
+      step: 2,
+      title: "スクリプトの実行と自己リファクタリング",
+      desc: "「スクリプト実行」コンソールでは、UWSCRスクリプト（.uws）をリアルタイムに実行・監視できます。実行終了後、「ボトルネック分析 & 最適化提案」をクリックすることで、実測ログ（ミリ秒ファクト）に基づいて不要な固定SLEEPを自動で検出し、非同期ループ監視コードへのリファクタリング提案とファイル適用を行うことができます。",
+      imgKey: "step_2.png",
+      imgSrc: ""
+    },
+    {
+      step: 3,
+      title: "AIオート・スライサーによるマニュアル作成",
+      desc: "「マニュアル作成」タブでは、レコーダーが保存した生の操作ログフォルダ（log.jsonが含まれる場所）を指定するだけで、AIが操作の区切りを自律分割して論理的なステップに自動分割します。自動生成されたUWSCRコードと、音声案内TTS、座標ズームと連動した対話型ガイドが瞬時に構築されます。",
+      imgKey: "step_3.png",
+      imgSrc: ""
+    }
+  ];
 
   onMount(async () => {
     try {
@@ -63,6 +92,40 @@
       document.documentElement.classList.remove('light-mode');
     }
   }
+
+  async function loadHelpImages() {
+    try {
+      const baseDir = await GetDefaultManualPath();
+      for (let i = 0; i < manualSteps.length; i++) {
+        const imgPath = baseDir + "\\act_gram_guide\\images\\" + manualSteps[i].imgKey;
+        const b64 = await GetImageBase64(imgPath);
+        manualSteps[i].imgSrc = b64;
+      }
+      manualSteps = [...manualSteps];
+    } catch (e) {
+      console.error("Failed to load help images:", e);
+    }
+  }
+
+  function openHelp() {
+    showHelpDrawer = true;
+    loadHelpImages();
+  }
+
+  async function startInteractiveGuide() {
+    isRunningGuide = true;
+    guideError = '';
+    guideSuccess = '';
+    try {
+      await RunInteractiveGuide();
+      guideSuccess = 'ガイドを実行しました！UWSCRの操作案内（メッセージボックス）に従ってください。';
+    } catch (e) {
+      console.error("Failed to run interactive guide:", e);
+      guideError = 'ガイドの実行に失敗しました: ' + e;
+    } finally {
+      isRunningGuide = false;
+    }
+  }
 </script>
 
 <main class="app-container">
@@ -103,6 +166,14 @@
           マニュアル作成
         </button>
       </nav>
+
+      <button class="settings-btn" on:click={openHelp} aria-label="Open help">
+        <svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </button>
 
       <button class="settings-btn" on:click={() => showSettingsDrawer = true} aria-label="Open settings">
         <svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -215,6 +286,88 @@
         <!-- Section 3: AI Layers Config -->
         <div class="drawer-section">
           <LayerConfig />
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Help Drawer Overlay & Panel -->
+  {#if showHelpDrawer}
+    <div class="drawer-overlay" on:click={() => showHelpDrawer = false} transition:fade={{ duration: 200 }}></div>
+    <div class="settings-drawer" transition:fly={{ x: 500, duration: 300, opacity: 1 }}>
+      <div class="drawer-header">
+        <div class="drawer-title">
+          <svg class="drawer-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <h2>ヘルプ & 使い方マニュアル</h2>
+        </div>
+        <button class="btn-close" on:click={() => showHelpDrawer = false} aria-label="Close help">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="drawer-body">
+        <div class="drawer-section">
+          <h3>act-gram の基本概念</h3>
+          <p style="font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); margin: 0 0 16px 0;">
+            UWSCR::act-gram は、AIを組み込んだ次世代RPA実行・開発コントロールセンターです。
+            操作の実行、ボトルネックの自動リファクタリング、録画からのマニュアル・スクリプト自動生成などの機能を提供します。
+          </p>
+        </div>
+
+        {#each manualSteps as step}
+          <div class="drawer-section" style="border-top: 1px solid var(--border-color); padding-top: 20px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <span style="background: var(--accent-color); color: var(--bg-primary); font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 10px;">Step {step.step}</span>
+              <h4 style="margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--text-primary);">{step.title}</h4>
+            </div>
+            <p style="font-size: 0.78rem; line-height: 1.5; color: var(--text-secondary); margin: 0 0 12px 0;">
+              {step.desc}
+            </p>
+            {#if step.imgSrc}
+              <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color); background: #000; display: flex; justify-content: center; margin-bottom: 8px;">
+                <img src={step.imgSrc} alt={step.title} style="max-width: 100%; height: auto; display: block;" />
+              </div>
+            {/if}
+          </div>
+        {/each}
+
+        <!-- Interactive Demo Section -->
+        <div class="drawer-section" style="border-top: 1px solid var(--border-color); padding-top: 20px; margin-bottom: 20px;">
+          <h3>インタラクティブ実演ガイド</h3>
+          <p style="font-size: 0.78rem; line-height: 1.5; color: var(--text-secondary); margin: 0 0 16px 0;">
+            UWSCRが実際にデスクトップ上を操作して、act-gramの各機能の概要を対話形式で案内します。
+          </p>
+          
+          <button 
+            class="btn-theme-toggle" 
+            on:click={startInteractiveGuide} 
+            disabled={isRunningGuide}
+            style="background: var(--accent-color); color: var(--bg-primary); border-color: var(--accent-color); font-weight: 600; width: 100%; padding: 12px; font-size: 0.85rem;"
+          >
+            {#if isRunningGuide}
+              実演ガイド起動中...
+            {:else}
+              インタラクティブ・ガイドを実行する (実演)
+            {/if}
+          </button>
+
+          {#if guideSuccess}
+            <div style="margin-top: 12px; padding: 8px 12px; background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); border-radius: 6px; font-size: 0.75rem; color: #2ecc71;">
+              {guideSuccess}
+            </div>
+          {/if}
+          {#if guideError}
+            <div style="margin-top: 12px; padding: 8px 12px; background: rgba(231, 76, 60, 0.15); border: 1px solid rgba(231, 76, 60, 0.3); border-radius: 6px; font-size: 0.75rem; color: #e74c3c;">
+              {guideError}
+            </div>
+          {/if}
         </div>
       </div>
     </div>
@@ -352,16 +505,23 @@
 
   .content-area {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background-color: var(--bg-primary);
     transition: background-color 0.3s ease;
   }
 
   .tab-content {
-    max-width: 1200px;
+    flex: 1;
+    width: 100%;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 32px 24px;
+    padding: 20px 24px;
     box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   .loader-container {

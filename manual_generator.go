@@ -382,7 +382,7 @@ func buildHTMLContent(steps []ManualStep) string {
         }
 
         .image-wrapper img {
-            max-width: 100%;
+            max-width: 100%%;
             height: auto;
             object-fit: contain;
             display: block;

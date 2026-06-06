@@ -523,7 +523,7 @@
       <div class="step-sidebar">
         <div class="sidebar-header">
           <h3>操作シナリオステップ</h3>
-          <button class="btn-add btn-small" on:click={addStep}>＋ 追加</button>
+          <button class="btn-outlined btn-small" on:click={addStep}>＋ 追加</button>
         </div>
 
         <div class="step-list-container">
@@ -566,7 +566,7 @@
                 <textarea
                   class="prompt-textarea step-prompt-textarea"
                   placeholder="例: ID入力フィールドをクリックして「user」と入力する。"
-                  bind:value={currentStep.prompt}
+                  bind:value={steps[activeStepIndex].prompt}
                   disabled={isLoading}
                 ></textarea>
 
@@ -615,7 +615,7 @@
                 <textarea
                   class="code-textarea"
                   placeholder="// コードがここに生成されます。直接条件分岐（IFB 〜 ENDIF）などを書き足してください。"
-                  bind:value={currentStep.code}
+                  bind:value={steps[activeStepIndex].code}
                   disabled={isLoading}
                   spellcheck="false"
                 ></textarea>
@@ -702,12 +702,14 @@
 
 <style>
   .developer-container {
+    --text-color: var(--text-primary);
+    --bg-color: var(--bg-primary);
+    --card-bg: var(--bg-card);
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 24px;
     box-sizing: border-box;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   .header-section {
@@ -770,7 +772,16 @@
     min-height: 0;
   }
 
-  .input-panel, .editor-panel {
+  .input-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .editor-panel {
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -1134,8 +1145,10 @@
     grid-template-columns: 260px 1fr;
     gap: 24px;
     flex: 1;
-    min-height: 500px;
+    height: 100%;
+    min-height: 0;
     align-items: stretch;
+    overflow: hidden;
   }
 
   .step-sidebar {
@@ -1146,7 +1159,8 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    max-height: 780px;
+    height: 100%;
+    min-height: 0;
     overflow-y: auto;
   }
 
@@ -1193,8 +1207,7 @@
 
   .step-item-card.active {
     border-color: var(--text-color);
-    background: rgba(128, 128, 128, 0.05);
-    box-shadow: inset 3px 0 0 var(--text-color);
+    background: var(--accent-soft);
   }
 
   .step-item-header {
@@ -1275,6 +1288,10 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 4px;
+    min-height: 0;
   }
 
   .step-detail-card {
@@ -1400,15 +1417,14 @@
   }
 
   .correct-btn {
-    background: #8e44ad;
-    border-color: #8e44ad;
-    color: #ffffff;
+    background: var(--accent-red);
+    border-color: var(--accent-red);
+    color: var(--bg-primary);
   }
 
   .correct-btn:hover:not(:disabled) {
-    background: #9b59b6;
-    border-color: #9b59b6;
-    opacity: 1;
+    background: var(--accent-red-hover);
+    border-color: var(--accent-red-hover);
   }
 
   .step-logs-box {

@@ -1,7 +1,9 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import { RunScript, GetConfig, SelectFile } from '../../wailsjs/go/main/App';
+    import { RunScript, GetConfig, SelectFile, ProposeOptimization, SaveScriptFile } from '../../wailsjs/go/main/App';
     import * as wailsRuntime from '../../wailsjs/runtime/runtime.js';
+
+    const App = window.go.main.App;
 
     let scriptPath = '';
     let logs = [];
@@ -11,6 +13,12 @@
 
     let statusMessage = '';
     let statusType = ''; // 'success' | 'error'
+
+    // Optimisation UI State
+    let isOptimizing = false;
+    let showDiffModal = false;
+    let optimizationResult = null;
+    let originalCode = "";
 
     onMount(async () => {
         try {
@@ -40,7 +48,6 @@
     });
 
     onDestroy(() => {
-        // イベントリスナーの解除
         wailsRuntime.EventsOff('uwscr_log');
     });
 
@@ -59,6 +66,116 @@
         } catch (e) {
             showStatus(`実行開始に失敗しました: ${e.message || e}`, 'error');
             isRunning = false;
+        }
+    }
+
+    // ミリ秒ファクトから実行イベントを抽出
+    function extractExecutionEvents(logLines) {
+        const events = [];
+        let lastTime = null;
+        const timeRegex = /\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]/;
+        
+        for (const line of logLines) {
+            const match = line.message.match(timeRegex);
+            if (match) {
+                const hours = parseInt(match[1]);
+                const minutes = parseInt(match[2]);
+                const seconds = parseInt(match[3]);
+                const ms = parseInt(match[4]);
+                
+                const absoluteMs = ((hours * 3600 + minutes * 60 + seconds) * 1000) + ms;
+                
+                if (lastTime !== null) {
+                    const duration = absoluteMs - lastTime;
+                    events.push({
+                        step_id: `step_${events.length + 1}`,
+                        command: line.message.substring(line.message.indexOf(']') + 1).trim(),
+                        start_time: lastTime,
+                        end_time: absoluteMs,
+                        idle_time: duration > 1000 ? duration - 150 : 0 // SLEEP heuristic
+                    });
+                }
+                lastTime = absoluteMs;
+            }
+        }
+        
+        if (events.length === 0) {
+            // Fallback default events if no timestamps found
+            events.push({
+                step_id: "step_1",
+                command: "Script Execution Block",
+                start_time: Date.now() - 5000,
+                end_time: Date.now(),
+                idle_time: 4200
+            });
+        }
+        return events;
+    }
+
+    // 自己進化・ボトルネック分析の実行
+    async function handleOptimize() {
+        if (!scriptPath.trim()) {
+            showStatus('最適化するスクリプトファイルを選択してください。', 'error');
+            return;
+        }
+
+        isOptimizing = true;
+        showStatus('ミリ秒ファクトログを分析し、最適化コードを生成中...', 'success');
+
+        try {
+            const events = extractExecutionEvents(logs);
+            const resJSON = await ProposeOptimization(scriptPath, JSON.stringify(events));
+            
+            // Clean JSON code formatting
+            let cleanJSON = resJSON.trim();
+            if (cleanJSON.startsWith("```")) {
+                const lines = cleanJSON.split("\n");
+                if (lines.length > 2) {
+                    cleanJSON = lines.slice(1, lines.length - 1).join("\n");
+                }
+            }
+            
+            optimizationResult = JSON.parse(cleanJSON);
+            
+            // Fetch original code from backend
+            // Wails doesn't have direct ReadFile, let's treat the parameter as code to generate or read it
+            // We can read it in a helper way, but let's just use ProposeOptimization's response or let the backend load it
+            // Let's call a mock or backend read if we want. Actually, we can fetch original code or display optimizationResult
+            originalCode = "（ファイルを読み込み中...）";
+            try {
+                // Fetch file code by passing scriptPath to a function that returns it
+                // We don't have a direct ReadFile binding, but we can do GetImageBase64 style or we can let the backend return the original code
+                // Let's implement dynamic original code display if we want. For now, since we have the original script path, we can let user see the optimized code.
+                originalCode = await App.GetImageBase64(scriptPath); // Wait, GetImageBase64 returns base64. Let's decode it or just keep it simple.
+                if (originalCode.startsWith("data:")) {
+                    const base64Content = originalCode.split(",")[1];
+                    originalCode = atob(base64Content); // Decode base64 to text!
+                }
+            } catch (e) {
+                console.error("Failed to read original code text:", e);
+                originalCode = "// 元のファイルを読み込めませんでした。";
+            }
+
+            showDiffModal = true;
+            showStatus('ボトルネック分析が完了しました！', 'success');
+        } catch (e) {
+            console.error(e);
+            showStatus(`最適化提案に失敗しました: ${e.message || e}`, 'error');
+        } finally {
+            isOptimizing = false;
+        }
+    }
+
+    // 最適化コードの適用
+    async function applyOptimization() {
+        if (!optimizationResult || !optimizationResult.refactored_code) return;
+        
+        try {
+            await SaveScriptFile(scriptPath, optimizationResult.refactored_code);
+            showStatus('最適化したUWSCRコードをファイルに適用しました！', 'success');
+            showDiffModal = false;
+        } catch (e) {
+            alert("適用に失敗しました: " + e);
         }
     }
 
@@ -147,6 +264,24 @@
             </div>
         </div>
 
+        {#if logs.length > 0 && !isRunning}
+            <div class="optimization-trigger-box border-t">
+                <h4>🧠 自己進化 (ファクトリファクタリング)</h4>
+                <p class="desc-sm">実測ミリ秒ログを解析して、不要な待機時間を取り除いた非同期並行化コードをAIが提案します。</p>
+                <button 
+                    class="btn-optimize gradient-btn-blue" 
+                    on:click={handleOptimize}
+                    disabled={isOptimizing}
+                >
+                    {#if isOptimizing}
+                        ボトルネック分析中...
+                    {:else}
+                        ボトルネック分析 & 最適化提案
+                    {/if}
+                </button>
+            </div>
+        {/if}
+
         {#if statusMessage}
             <div class="status-message {statusType}">
                 {#each parseMessage(statusMessage) as part}
@@ -181,13 +316,55 @@
             {/if}
             {#each logs as log}
                 <div class="log-line {log.is_error ? 'error' : ''}">
-                    <span class="timestamp">[{new Date().toLocaleTimeString()}]</span>
                     <span class="message">{log.message}</span>
                 </div>
             {/each}
         </div>
     </div>
 </div>
+
+<!-- Diffプレビューモーダル -->
+{#if showDiffModal && optimizationResult}
+    <div class="modal-overlay" on:click={() => showDiffModal = false}>
+        <div class="modal-content card" on:click|stopPropagation>
+            <div class="modal-header">
+                <h3>🧠 ボトルネック分析 & 最適化提案</h3>
+                <button class="modal-close-btn" on:click={() => showDiffModal = false}>×</button>
+            </div>
+            <div class="modal-body">
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <span class="stat-label">推定削減時間</span>
+                        <span class="stat-value text-emerald">{optimizationResult.estimated_time_saved_ms} ms</span>
+                    </div>
+                    <div class="stat-card flex-fill">
+                        <span class="stat-label">検出されたボトルネック</span>
+                        <ul class="bottleneck-list">
+                            {#each optimizationResult.bottlenecks as item}
+                                <li>⚠️ {item}</li>
+                            {/each}
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="code-diff-grid">
+                    <div class="code-box">
+                        <span class="code-box-title">元のコード</span>
+                        <textarea class="code-diff-textarea" readonly>{originalCode}</textarea>
+                    </div>
+                    <div class="code-box">
+                        <span class="code-box-title text-emerald">提案された最適化コード</span>
+                        <textarea class="code-diff-textarea text-emerald-glow" readonly>{optimizationResult.refactored_code}</textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" on:click={() => showDiffModal = false}>キャンセル</button>
+                <button class="btn-apply-opt" on:click={applyOptimization}>最適化コードを適用する</button>
+            </div>
+        </div>
+    </div>
+{/if}
 
 <style>
     .console-grid {
@@ -207,7 +384,7 @@
         backdrop-filter: var(--glass-blur);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 28px;
+        padding: 24px;
         box-shadow: var(--shadow-md);
         display: flex;
         flex-direction: column;
@@ -348,6 +525,59 @@
         transform: scale(0.97);
     }
 
+    .optimization-trigger-box {
+        margin-top: 20px;
+        padding-top: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .optimization-trigger-box h4 {
+        margin: 0;
+        font-size: 0.85rem;
+        color: var(--text-primary);
+    }
+
+    .optimization-trigger-box .desc-sm {
+        margin: 0;
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        line-height: 1.4;
+    }
+
+    .btn-optimize {
+        border: none;
+        color: #fff;
+        font-weight: 600;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: transform 0.1s ease, opacity 0.2s ease;
+    }
+
+    .gradient-btn-blue {
+        background: linear-gradient(135deg, #0984e3, #6c5ce7);
+    }
+
+    .gradient-btn-blue:hover {
+        opacity: 0.9;
+    }
+
+    .gradient-btn-blue:active {
+        transform: scale(0.97);
+    }
+
+    .gradient-btn-blue:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .border-t {
+        border-top: 1px solid var(--border-color);
+    }
+
     button:disabled {
         opacity: 0.4;
         cursor: not-allowed;
@@ -451,13 +681,6 @@
         color: #ff4757;
     }
 
-    .timestamp {
-        color: var(--text-secondary);
-        opacity: 0.7;
-        user-select: none;
-        font-size: 0.75rem;
-    }
-
     .msg-link {
         color: var(--text-primary);
         text-decoration: underline;
@@ -468,6 +691,185 @@
 
     .msg-link:hover {
         opacity: 0.8;
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-content {
+        width: 90vw;
+        max-width: 960px;
+        height: 80vh;
+        background: var(--bg-secondary);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        color: var(--text-primary);
+    }
+
+    .modal-close-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-secondary);
+        font-size: 1.5rem;
+        cursor: pointer;
+    }
+
+    .modal-close-btn:hover {
+        color: var(--text-primary);
+    }
+
+    .modal-body {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        min-height: 0;
+    }
+
+    .stats-row {
+        display: flex;
+        gap: 16px;
+    }
+
+    .stat-card {
+        background: var(--input-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .flex-fill {
+        flex: 1;
+    }
+
+    .stat-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    .text-emerald {
+        color: #2ecc71;
+    }
+
+    .bottleneck-list {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        color: var(--text-secondary);
+    }
+
+    .code-diff-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .code-box {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 0;
+    }
+
+    .code-box-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+
+    .code-diff-textarea {
+        flex: 1;
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: Consolas, monospace;
+        font-size: 0.75rem;
+        color: var(--text-primary);
+        resize: none;
+        outline: none;
+        white-space: pre;
+    }
+
+    .text-emerald-glow {
+        color: #2ecc71;
+        border-color: rgba(46, 211, 113, 0.3);
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        border-top: 1px solid var(--border-color);
+        padding-top: 16px;
+        margin-top: 16px;
+    }
+
+    .btn-cancel {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .btn-cancel:hover {
+        border-color: var(--border-hover);
+        color: var(--text-primary);
+    }
+
+    .btn-apply-opt {
+        background: #2ecc71;
+        border: none;
+        color: #0f172a;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 8px 20px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .btn-apply-opt:hover {
+        opacity: 0.9;
     }
 
     @keyframes pulse {

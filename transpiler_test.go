@@ -17,19 +17,18 @@ func TestTranspile(t *testing.T) {
 			name:  "Text only AI_EVAL",
 			input: `Dim res = AI_EVAL("この伝票の合計金額は？")`,
 			expected: []string{
-				`POWERSHELL(`,
+				`DOSCMD(`,
 				`curl.exe -s -X POST http://127.0.0.1:31415/ai_eval`,
-				`-d '{\""prompt\"":\""この伝票の合計金額は？\""}'`,
+				`-d ""{\""prompt\"":\""この伝票の合計金額は？\""}""`,
 			},
 		},
 		{
 			name:  "AI_EVAL with image capture function",
 			input: `Dim res = AI_EVAL("金額を読み取って", GetScreenCapture())`,
 			expected: []string{
-				`POWERSHELL(`,
+				`DOSCMD(`,
 				`curl.exe -s -X POST http://127.0.0.1:31415/ai_eval`,
-				`-d '{\""prompt\"":\""金額を読み取って\"",\""image_path\"":\""`,
-				`+ REPLACE(GetScreenCapture(), ""\"", ""\\"" )`,
+				`-d ""{\""prompt\"":\""金額を読み取って\"",\""image_path\"":\""\"" + REPLACE(GetScreenCapture(), ""\"", ""\\"" ) + ""\""}""`,
 			},
 		},
 		{

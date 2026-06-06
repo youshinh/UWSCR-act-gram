@@ -65,6 +65,49 @@ export namespace main {
 	        this.screenshot_base64 = source["screenshot_base64"];
 	    }
 	}
+	export class TestRunResult {
+	    logs: string;
+	    success: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TestRunResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.logs = source["logs"];
+	        this.success = source["success"];
+	    }
+	}
+
+}
+
+export namespace manual {
+	
+	export class ManualStep {
+	    step_id: number;
+	    title: string;
+	    instruction: string;
+	    click_x: number;
+	    click_y: number;
+	    uws_code: string;
+	    image_path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ManualStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.step_id = source["step_id"];
+	        this.title = source["title"];
+	        this.instruction = source["instruction"];
+	        this.click_x = source["click_x"];
+	        this.click_y = source["click_y"];
+	        this.uws_code = source["uws_code"];
+	        this.image_path = source["image_path"];
+	    }
+	}
 
 }
 

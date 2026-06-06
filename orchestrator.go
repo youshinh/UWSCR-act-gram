@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -107,6 +108,10 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		defer os.Remove(tempPath) // 終了後に一時ファイルを削除
 
 		cmd := exec.Command(uwscrPath, tempPath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: 0x08000000,
+		}
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -209,6 +214,10 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, uwscrPath, tempPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000,
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

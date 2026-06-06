@@ -13,7 +13,7 @@
     };
 
     // 一括設定モードの制御用
-    let isUnifiedMode = false;
+    let isUnifiedMode = true;
     let unifiedSelection = { provider: 'google', model: 'gemini-flash-lite-latest' };
     let isFetchingUnified = false;
 
@@ -43,20 +43,10 @@
                     }
                 }
 
-                // すべてのレイヤーの設定値（プロバイダーとモデル）が同一なら一括設定モードを有効にする
-                const b = selections.brain;
-                const e = selections.eye;
-                const u = selections.utility;
-                if (b.provider === e.provider && b.model === e.model &&
-                    b.provider === u.provider && b.model === u.model) {
-                    isUnifiedMode = true;
-                    unifiedSelection.provider = b.provider;
-                    unifiedSelection.model = b.model;
-                } else {
-                    isUnifiedMode = false;
-                    unifiedSelection.provider = b.provider;
-                    unifiedSelection.model = b.model;
-                }
+                // デフォルトを一括設定モードとして起動する
+                isUnifiedMode = true;
+                unifiedSelection.provider = selections.brain.provider;
+                unifiedSelection.model = selections.brain.model;
             }
 
             if (isUnifiedMode) {
