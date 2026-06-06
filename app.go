@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1070,4 +1071,26 @@ func (a *App) StopRecording() (string, error) {
 	a.RestoreWindow()
 
 	return logDir, err
+}
+
+// ReadScriptFile は指定された UWSCR スクリプトファイルの内容を読み込みます
+func (a *App) ReadScriptFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// OpenKnowledgeDir は RAG 知識フォルダをエクスプローラーで開きます
+func (a *App) OpenKnowledgeDir() error {
+	dir := filepath.Join(a.getExecBaseDir(), "knowledge")
+	// フォルダが存在しない場合は作成
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.MkdirAll(dir, 0755)
+	}
+	
+	// Windowsの explorer で開く
+	cmd := exec.Command("explorer", dir)
+	return cmd.Start()
 }

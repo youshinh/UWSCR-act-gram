@@ -144,6 +144,8 @@
       isRunningGuide = false;
     }
   }
+
+  let importedStepsForDev = null;
 </script>
 
 <main class="app-container">
@@ -289,9 +291,15 @@
             </button>
           </div>
         {:else if activeTab === 'manual'}
-          <ManualCreator bind:selectedLogDir={currentLogDir} />
+          <ManualCreator 
+            bind:selectedLogDir={currentLogDir} 
+            onExportToDev={(stepsData) => {
+              importedStepsForDev = stepsData;
+              activeTab = 'dev';
+            }}
+          />
         {:else if activeTab === 'dev'}
-          <ScriptDeveloper />
+          <ScriptDeveloper bind:importedSteps={importedStepsForDev} />
         {:else if activeTab === 'rec'}
           <RecSimulator onRecordFinished={(logDir) => {
             currentLogDir = logDir;

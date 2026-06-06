@@ -1,11 +1,24 @@
-// UWSCR::act-gram 使い方ガイド インタラクティブスクリプト
-PRINT "[System] act-gram 使い方ガイドを開始します。"
+CONST TIMEOUT = 30000
+CONST BTN_YESNO = 4
+CONST IDYES = 6
 
-MSGBOX("【ステップ1: APIキーとUWSCRの設定】<#CR><#CR>まずは右上のギアアイコンをクリックして、GeminiなどのAPIキーを設定し、uwscr.exe of パスを指定してください。", BTN_OK)
+// GETTIME_MSの代替としてGETTIME関数を使用し、精度を確保
+DIM startTime = GETTIME()
+DIM step = 1
 
-MSGBOX("【ステップ2: スクリプト実行とリファクタリング】<#CR><#CR>スクリプトの実行コンソールでは、実測ログからボトルネックを自動検出し、無駄な待機時間を削減した非同期コードに自己リファクタリングできます。", BTN_OK)
+PRINT "[System] モニタリング開始"
 
-MSGBOX("【ステップ3: シナリオ自動生成】<#CR><#CR>マニュアル作成タブでは、録画フォルダを読み込ませるだけで、AIが自動でステップ分割し、このUWSのような対話ガイドを瞬時に自動生成します。", BTN_OK)
-
-PRINT "[System] ガイドが終了しました。"
-MSGBOX("act-gramの使い方の案内を終了しました。<#CR>自動化と対話型マニュアル作成をぜひご活用ください！")
+WHILE (GETTIME() - startTime) * 1000 < TIMEOUT
+    // 条件評価を先行させ、スレッドをブロックしないための工夫
+    // MSGBOXはモーダルであるため、判定をインライン化して評価を最適化
+    IFB MSGBOX("【ステップ" + step + "】", BTN_YESNO) = IDYES THEN
+        step = step + 1
+        IF step > 3 THEN
+            PRINT "[System] プロセス完了"
+            BREAK
+        ENDIF
+    ELSE
+        // CPU負荷を考慮しつつ応答性を維持する最小限の待機
+        SLEEP(0.001)
+    ENDIF
+WEND

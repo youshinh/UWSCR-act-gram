@@ -82,7 +82,7 @@
   <div class="rec-card">
     <div class="rec-header">
       <div class="rec-dot" class:active={isRecording}></div>
-      <h2>UIA オートメーション・レコーダー</h2>
+      <h2>操作レコーダー</h2>
     </div>
 
     <p class="rec-desc">

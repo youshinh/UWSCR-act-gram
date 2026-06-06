@@ -4,8 +4,26 @@
 
   const App = window.go.main.App;
 
+  export let importedSteps = null;
+
   // モード切り替え: 'batch' (一括開発) or 'step' (伴走型ステップ開発)
   let mode = 'batch';
+
+  $: if (importedSteps && importedSteps.length > 0) {
+    steps = importedSteps.map((s, idx) => ({
+      id: s.step_number || (idx + 1),
+      title: s.title || `ステップ ${idx + 1}`,
+      prompt: s.instruction || '',
+      code: s.uws_code || '',
+      logs: '',
+      status: 'idle',
+      sessionContext: null
+    }));
+    activeStepIndex = 0;
+    mode = 'step'; // ステップ開発モードに切り替え
+    importedSteps = null; // 処理したらクリア
+    showStatus('マニュアル作成から手順をインポートしました！各ステップを直接編集・検証できます。');
+  }
 
   // 一括開発用状態
   let prompt = '';
@@ -106,6 +124,23 @@
       showStatus('UWSCR スクリプトを生成しました');
     } catch (err) {
       showStatus(`生成エラー: ${err.message || err}`, true);
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  async function handleLoad() {
+    if (!savePath.trim()) {
+      showStatus('読み込むスクリプトのパスを入力してください', true);
+      return;
+    }
+    isLoading = true;
+    try {
+      const content = await App.ReadScriptFile(savePath);
+      generatedCode = content;
+      showStatus('スクリプトをファイルから読み込みました');
+    } catch (err) {
+      showStatus(`読み込みエラー: ${err.message || err}`, true);
     } finally {
       isLoading = false;
     }
@@ -383,8 +418,8 @@
 
 <div class="developer-container">
   <div class="header-section">
-    <h1>スクリプト自動開発 (UWSCR ジェネレータ)</h1>
-    <p class="subtitle">自然言語と現在の画面状況を組み合わせて自動化スクリプトを作成・編集・実行します</p>
+    <h1>スクリプト開発</h1>
+    <p class="subtitle">自然言語と現在の画面状況を組み合わせてUWSCRスクリプトを作成・編集・実行します</p>
     
     <div class="mode-tabs">
       <button class="mode-tab-btn {mode === 'batch' ? 'active' : ''}" on:click={() => switchMode('batch')}>一括開発</button>
@@ -502,6 +537,9 @@
             </div>
 
             <div class="button-group">
+              <button class="btn-outlined" on:click={handleLoad} disabled={isLoading}>
+                読み込む
+              </button>
               <button class="btn-outlined" on:click={handleSave} disabled={isLoading || !generatedCode}>
                 保存する
               </button>
@@ -607,9 +645,9 @@
             <!-- コードエディタ -->
             <div class="step-code-section">
               <div class="step-section-title">
-                <h4>2. UWSCRコード（直接編集して条件分岐を追記可能）</h4>
+                <h4>2. UWSCRスクリプト（直接編集して条件分岐を追記可能）</h4>
               </div>
-              <p class="section-desc">生成されたコードです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
+              <p class="section-desc">生成されたスクリプトです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
               
               <div class="editor-container step-editor-container">
                 <textarea

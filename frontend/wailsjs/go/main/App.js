@@ -66,8 +66,16 @@ export function MinimizeWindow() {
   return window['go']['main']['App']['MinimizeWindow']();
 }
 
+export function OpenKnowledgeDir() {
+  return window['go']['main']['App']['OpenKnowledgeDir']();
+}
+
 export function ProposeOptimization(arg1, arg2) {
   return window['go']['main']['App']['ProposeOptimization'](arg1, arg2);
+}
+
+export function ReadScriptFile(arg1) {
+  return window['go']['main']['App']['ReadScriptFile'](arg1);
 }
 
 export function RestoreWindow() {

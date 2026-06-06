@@ -1,9 +1,10 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   import * as wailsRuntime from '../../wailsjs/runtime/runtime.js';
   import appIcon from '../assets/images/appicon.png';
 
   const App = window.go.main.App;
+  const dispatch = createEventDispatcher();
 
   let currentStep = 0;
   let steps = []; // Goの slicer からフェッチされるステップ
@@ -13,6 +14,27 @@
   let isTTSPlaying = false;
   let userQuestion = "";
   let chatHistory = [];
+
+  function handleExportToDev() {
+    if (steps.length === 0) {
+      alert("エクスポートする手順がありません。まずは手順を自動生成してください。");
+      return;
+    }
+    dispatch('exportToDev', steps);
+  }
+
+  function clearChat() {
+    chatHistory = [];
+    userQuestion = "";
+  }
+
+  async function openRAGFolder() {
+    try {
+      await App.OpenKnowledgeDir();
+    } catch (err) {
+      alert("知識フォルダを開けませんでした: " + err);
+    }
+  }
 
   let activeStepBase64 = "";
   let imageLoadError = false;
@@ -155,17 +177,26 @@
 <div class="manual-creator-layout">
   <!-- 1. オート・スライサー制御パネル -->
   <div class="control-panel card">
-    <div class="panel-header">
-      <div class="header-main">
+    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+      <div class="header-main" style="display: flex; align-items: center; gap: 8px;">
         <svg class="header-icon animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <polygon points="10 8 16 12 10 16 10 8"/>
         </svg>
         <div class="header-text">
-          <h2>シナリオ自動生成（オート・スライサー）</h2>
-          <p class="description">レコーダーが保存した生の操作ログフォルダを指定すると、論理的ステップに自動分割し、自動再生用コードを含む対話型ガイドを生成します。</p>
+          <h2>シナリオ自動生成</h2>
+          <p class="description" style="margin: 0; font-size: 0.8rem; color: var(--text-secondary);">操作レコーダーが保存した生の操作ログフォルダを指定すると、論理的ステップに自動分割し、自動再生用スクリプトを含む対話型ガイドを生成します。</p>
         </div>
       </div>
+      {#if steps.length > 0}
+        <button class="btn-browse" on:click={handleExportToDev} style="background: var(--accent-soft); border: 1px solid var(--accent-color); color: var(--accent-color); font-weight: 600; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s; font-size: 0.75rem; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          スクリプト開発で編集する
+        </button>
+      {/if}
     </div>
 
     <div class="settings-row">
@@ -173,7 +204,7 @@
         <div class="input-with-btn">
           <input 
             type="text" 
-            placeholder="録画ログフォルダパス (C:/data/log...)" 
+            placeholder="記録ログフォルダパス (C:/data/log...)" 
             class="path-input"
             bind:value={selectedLogDir}
             disabled={isGenerating}
@@ -193,7 +224,7 @@
         {#if isGenerating}
           <span class="spinner-mini"></span> 解析記述中...
         {:else}
-          録画から自動生成
+          記録から自動生成
         {/if}
       </button>
     </div>
@@ -249,19 +280,19 @@
             <p class="step-desc">{activeStep.instruction}</p>
           </div>
           <div class="code-preview">
-            <label class="code-label">自動生成された UWSCR</label>
+            <label class="code-label">自動生成された UWSCRスクリプト</label>
             <textarea 
               class="code-textarea"
               bind:value={activeStep.uws_code}
-              placeholder="// UWSCRコードがここに表示されます"
+              placeholder="// UWSCRスクリプトがここに表示されます"
             ></textarea>
           </div>
         </div>
       {:else}
         <div class="empty-state">
           <img src={appIcon} alt="App Icon" style="width: 54px; height: 54px; margin-bottom: 12px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3)); object-fit: contain;" />
-          <h3>録画データがロードされていません</h3>
-          <p>録画ログディレクトリを指定して、上の「録画から自動生成」を実行してください。</p>
+          <h3>記録データがロードされていません</h3>
+          <p>記録ログディレクトリを指定して、上の「記録から自動生成」を実行してください。</p>
         </div>
       {/if}
 
@@ -293,12 +324,36 @@
       </div>
     </div>
 
-    <!-- 右：現場コパイロット（RAG・自由質疑応答） -->
+    <!-- 右：業務アシスタント -->
     <div class="copilot-panel card">
-      <div class="copilot-header">
-        <span class="copilot-dot"></span>
-        <h3>現場業務コパイロット (RAG連携)</h3>
+      <div class="copilot-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="copilot-dot"></span>
+          <h3>業務アシスタント</h3>
+        </div>
+        <button 
+          on:click={openRAGFolder} 
+          style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.65rem; padding: 3px 8px; border-radius: 4px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px;"
+          title="質問の参照ソースとなるファイルを追加します"
+        >
+          📂 知識フォルダを開く
+        </button>
       </div>
+
+      <div class="rag-help-text" style="padding: 10px 16px; background: rgba(128, 128, 128, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.7rem; color: var(--text-secondary); line-height: 1.4;">
+        💡 <b>業務知識の提供方法:</b> 上記の「知識フォルダを開く」ボタンを押し、開いたフォルダ内に仕様書やマニュアルのテキストファイル（.txt, .md）を配置してください。その内容をベースに質問に回答できるようになります。
+      </div>
+
+      {#if chatHistory.length > 0}
+        <div style="display: flex; justify-content: flex-end; padding: 8px 16px; border-bottom: 1px solid var(--border-color);">
+          <button 
+            on:click={clearChat}
+            style="background: transparent; border: none; color: var(--accent-color); font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;"
+          >
+            🔄 履歴を消去して最初の質問選択に戻る
+          </button>
+        </div>
+      {/if}
 
       <div class="chat-container">
         {#if chatHistory.length === 0}

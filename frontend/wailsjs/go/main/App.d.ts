@@ -35,7 +35,11 @@ export function HasAPIKey(arg1:string):Promise<boolean>;
 
 export function MinimizeWindow():Promise<void>;
 
+export function OpenKnowledgeDir():Promise<void>;
+
 export function ProposeOptimization(arg1:string,arg2:string):Promise<string>;
+
+export function ReadScriptFile(arg1:string):Promise<string>;
 
 export function RestoreWindow():Promise<void>;
 
