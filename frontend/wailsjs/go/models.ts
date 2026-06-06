@@ -48,6 +48,23 @@ export namespace main {
 		    return a;
 		}
 	}
+	
+	export class SessionContext {
+	    active_title: string;
+	    screenshot_path: string;
+	    screenshot_base64: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionContext(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.active_title = source["active_title"];
+	        this.screenshot_path = source["screenshot_path"];
+	        this.screenshot_base64 = source["screenshot_base64"];
+	    }
+	}
 
 }
 

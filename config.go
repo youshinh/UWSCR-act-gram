@@ -44,9 +44,9 @@ func LoadConfig() (*Config, error) {
 		Port:      DefaultPort,
 		UWSCRPath: "",
 		Layers: map[string]LayerConfig{
-			"brain":   {Provider: "anthropic", Model: "claude-3-7-sonnet-20250219"},
-			"eye":     {Provider: "google", Model: "gemini-2.5-flash"},
-			"utility": {Provider: "google", Model: "gemini-2.5-flash-lite"},
+			"brain":   {Provider: "google", Model: "gemini-flash-lite-latest"},
+			"eye":     {Provider: "google", Model: "gemini-flash-lite-latest"},
+			"utility": {Provider: "google", Model: "gemini-flash-lite-latest"},
 		},
 	}
 
@@ -62,7 +62,10 @@ func LoadConfig() (*Config, error) {
 
 	err = yaml.Unmarshal(data, config)
 	if err != nil {
-		return nil, err
+		// 設定ファイルが破損している場合は削除してデフォルトで初期化・保存する
+		_ = os.Remove(configPath)
+		_ = SaveConfig(config)
+		return config, nil
 	}
 
 	// ポートが未指定か不正な場合はデフォルトに補正

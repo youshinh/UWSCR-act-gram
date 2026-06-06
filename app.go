@@ -3,9 +3,18 @@ package main
 import (
 	"act_gram/llm"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -14,10 +23,12 @@ type App struct {
 	cfg          *Config
 	localServer  *LocalServer
 	orchestrator *Orchestrator
+	mu           sync.Mutex
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
+	log.Println("[App] Initializing act-gram application structure...")
 	a := &App{}
 	a.localServer = NewLocalServer(a)
 	a.orchestrator = NewOrchestrator(a)
@@ -27,48 +38,63 @@ func NewApp() *App {
 // startup is called when the app starts. The context is saved
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
+	log.Println("[App.startup] App starting up...")
 	a.ctx = ctx
 	cfg, err := LoadConfig()
 	if err != nil {
-		fmt.Printf("failed to load config: %v\n", err)
+		log.Printf("[App.startup] Failed to load config: %v", err)
 	}
 	a.cfg = cfg
 
 	// ローカルAPIサーバーをGoroutineで非同期起動
 	go func() {
+		log.Printf("[App.startup] Launching Local API Server on port %d...", a.cfg.Port)
 		err := a.localServer.Start(a.cfg.Port)
 		if err != nil && err != http.ErrServerClosed {
-			fmt.Printf("Local API Server error: %v\n", err)
+			log.Printf("[App.startup] Local API Server error: %v", err)
 		}
 	}()
 }
 
 // shutdown is called when the app is closing.
 func (a *App) shutdown(ctx context.Context) {
+	log.Println("[App.shutdown] App shutting down...")
 	if a.localServer != nil {
-		fmt.Println("Shutting down Local API Server...")
+		log.Println("[App.shutdown] Shutting down Local API Server...")
 		a.localServer.Shutdown()
 	}
 }
 
 // GetConfig は現在の設定をフロントエンドに返します
 func (a *App) GetConfig() (*Config, error) {
+	log.Println("[App.GetConfig] Fetching configuration request...")
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	if a.cfg == nil {
 		cfg, err := LoadConfig()
 		if err != nil {
+			log.Printf("[App.GetConfig] Failed to load config: %v", err)
 			return nil, err
 		}
 		a.cfg = cfg
 	}
+	log.Printf("[App.GetConfig] Config loaded: %+v", a.cfg)
 	return a.cfg, nil
 }
 
 // SaveConfig は指定されたレイヤーの設定を保存します
 func (a *App) SaveConfig(layer string, provider string, model string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	log.Printf("[App.SaveConfig] Request received. Layer=%s, Provider=%s, Model=%s", layer, provider, model)
+
 	if a.cfg == nil {
 		var err error
 		a.cfg, err = LoadConfig()
 		if err != nil {
+			log.Printf("[App.SaveConfig] Failed to load config: %v", err)
 			return err
 		}
 	}
@@ -82,67 +108,138 @@ func (a *App) SaveConfig(layer string, provider string, model string) error {
 		Model:    model,
 	}
 
-	return SaveConfig(a.cfg)
+	err := SaveConfig(a.cfg)
+	if err != nil {
+		log.Printf("[App.SaveConfig] Failed to save config to file: %v", err)
+	} else {
+		log.Printf("[App.SaveConfig] Config successfully written for %s layer", layer)
+	}
+	return err
+}
+
+// SaveConfigs は複数のレイヤー設定を一括で保存します (並行書き込みを避けるため)
+func (a *App) SaveConfigs(layersJSON string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	log.Printf("[App.SaveConfigs] Bulk saving configuration changes...")
+
+	var newLayers map[string]LayerConfig
+	if err := json.Unmarshal([]byte(layersJSON), &newLayers); err != nil {
+		log.Printf("[App.SaveConfigs] JSON unmarshal failed: %v", err)
+		return fmt.Errorf("JSONのパースに失敗しました: %v", err)
+	}
+
+	if a.cfg == nil {
+		var err error
+		a.cfg, err = LoadConfig()
+		if err != nil {
+			log.Printf("[App.SaveConfigs] Failed to load config: %v", err)
+			return err
+		}
+	}
+
+	if a.cfg.Layers == nil {
+		a.cfg.Layers = make(map[string]LayerConfig)
+	}
+
+	for layer, lcfg := range newLayers {
+		a.cfg.Layers[layer] = lcfg
+		log.Printf("[App.SaveConfigs] Updating Layer=%s: Provider=%s, Model=%s", layer, lcfg.Provider, lcfg.Model)
+	}
+
+	err := SaveConfig(a.cfg)
+	if err != nil {
+		log.Printf("[App.SaveConfigs] Failed to write config file: %v", err)
+	} else {
+		log.Printf("[App.SaveConfigs] Bulk configurations successfully saved")
+	}
+	return err
 }
 
 // SaveAPIKey はAPIキーをセキュア領域に保存します
 func (a *App) SaveAPIKey(provider string, key string) error {
-	return SaveAPIKey(provider, key)
+	log.Printf("[App.SaveAPIKey] Registering API key for provider: %s", provider)
+	err := SaveAPIKey(provider, key)
+	if err != nil {
+		log.Printf("[App.SaveAPIKey] Failed to save credential: %v", err)
+	} else {
+		log.Printf("[App.SaveAPIKey] API key successfully registered in Credential Manager for %s", provider)
+	}
+	return err
 }
 
 // HasAPIKey は指定されたプロバイダーのAPIキーが登録されているかを判定します
 func (a *App) HasAPIKey(provider string) bool {
+	log.Printf("[App.HasAPIKey] Checking credential existence for provider: %s", provider)
 	key, err := GetAPIKey(provider)
 	if err != nil || key == "" {
+		log.Printf("[App.HasAPIKey] Credential NOT found for provider: %s", provider)
 		return false
 	}
+	log.Printf("[App.HasAPIKey] Credential exists for provider: %s", provider)
 	return true
 }
 
 // FetchModels は指定されたプロバイダーの利用可能モデルを動的に取得して返します
 func (a *App) FetchModels(provider string) ([]string, error) {
+	log.Printf("[App.FetchModels] Fetching models list for provider: %s", provider)
 	switch provider {
 	case "google":
 		key, err := GetAPIKey("google")
 		if err != nil {
+			log.Printf("[App.FetchModels] API key retrieval error: %v", err)
 			return nil, fmt.Errorf("APIキーの取得に失敗しました: %v", err)
 		}
 		if key == "" {
-			return []string{"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro"}, nil // 未登録時は主要モデルのフォールバック
+			log.Println("[App.FetchModels] API key not registered, returning default Gemini model fallbacks")
+			return []string{"gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro"}, nil
 		}
 		providerImpl := llm.NewGeminiProvider(key)
 		models, err := providerImpl.GetAvailableModels()
 		if err != nil {
-			// APIエラー時はデフォルトリストにフォールバック
-			return []string{"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro"}, nil
+			log.Printf("[App.FetchModels] API models request failed: %v. Falling back to default list.", err)
+			return []string{"gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro"}, nil
 		}
+		log.Printf("[App.FetchModels] Found %d models for Google provider", len(models))
 		return models, nil
 
 	case "anthropic":
 		key, err := GetAPIKey("anthropic")
 		if err != nil {
+			log.Printf("[App.FetchModels] API key retrieval error: %v", err)
 			return nil, fmt.Errorf("APIキーの取得に失敗しました: %v", err)
 		}
 		providerImpl := llm.NewAnthropicProvider(key)
-		return providerImpl.GetAvailableModels()
+		models, err := providerImpl.GetAvailableModels()
+		if err != nil {
+			log.Printf("[App.FetchModels] API models request failed: %v", err)
+			return nil, err
+		}
+		log.Printf("[App.FetchModels] Found %d models for Anthropic provider", len(models))
+		return models, nil
 
 	case "ollama":
 		providerImpl := llm.NewOllamaProvider()
 		models, err := providerImpl.GetAvailableModels()
 		if err != nil || len(models) == 0 {
-			// Ollamaが未起動または取得失敗時は主要な標準モデルをフォールバック
+			log.Printf("[App.FetchModels] Ollama models query failed (is it running?): %v. Returning defaults.", err)
 			return []string{"qwen2.5-coder:latest", "llama3.2-vision:latest", "gemma2:latest"}, nil
 		}
+		log.Printf("[App.FetchModels] Found %d models for Ollama provider", len(models))
 		return models, nil
 
 	default:
+		log.Printf("[App.FetchModels] Unknown provider: %s", provider)
 		return []string{}, nil
 	}
 }
 
 // RunScript は指定されたパスのスクリプトをトランスパイルして非同期実行します
 func (a *App) RunScript(scriptPath string) error {
+	log.Printf("[App.RunScript] Preparing to run UWSCR script: %s", scriptPath)
 	if a.orchestrator == nil {
+		log.Println("[App.RunScript] Error: orchestrator is uninitialized")
 		return fmt.Errorf("orchestrator is not initialized")
 	}
 	return a.orchestrator.RunScript(scriptPath)
@@ -150,22 +247,440 @@ func (a *App) RunScript(scriptPath string) error {
 
 // SaveUWSCRPath は明示的な UWSCRPath を保存します
 func (a *App) SaveUWSCRPath(path string) error {
+	log.Printf("[App.SaveUWSCRPath] Saving custom UWSCR executable path: %s", path)
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.cfg == nil {
 		var err error
 		a.cfg, err = LoadConfig()
 		if err != nil {
+			log.Printf("[App.SaveUWSCRPath] Failed to load config: %v", err)
 			return err
 		}
 	}
 	a.cfg.UWSCRPath = path
-	return SaveConfig(a.cfg)
+	err := SaveConfig(a.cfg)
+	if err != nil {
+		log.Printf("[App.SaveUWSCRPath] Failed to save config to file: %v", err)
+	} else {
+		log.Println("[App.SaveUWSCRPath] Custom UWSCR path successfully saved")
+	}
+	return err
+}
+
+// GetDefaultManualPath はマニュアル出力先の初期デフォルト絶対パス（カレントディレクトリ\manual）を返します
+func (a *App) GetDefaultManualPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Printf("[App.GetDefaultManualPath] Failed to get working directory: %v", err)
+		return "", err
+	}
+	defaultPath := filepath.Join(wd, "manual")
+	log.Printf("[App.GetDefaultManualPath] Default manual path resolved: %s", defaultPath)
+	return defaultPath, nil
 }
 
 // GenerateInteractiveManual はフロントエンドから渡されたステップ情報をもとにマニュアルを生成します
 func (a *App) GenerateInteractiveManual(outputPath string, stepsJSON string, useHighQualityTTS bool) error {
+	log.Printf("[App.GenerateInteractiveManual] Generating manual. Output=%s, TTS=%v", outputPath, useHighQualityTTS)
 	var steps []ManualStep
 	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		log.Printf("[App.GenerateInteractiveManual] JSON parsing failed: %v", err)
 		return fmt.Errorf("JSONのパースに失敗しました: %v", err)
 	}
-	return GenerateManual(outputPath, steps, useHighQualityTTS)
+	log.Printf("[App.GenerateInteractiveManual] Processing %d steps...", len(steps))
+	err := GenerateManual(outputPath, steps, useHighQualityTTS)
+	if err != nil {
+		log.Printf("[App.GenerateInteractiveManual] Error generating manual: %v", err)
+	} else {
+		log.Printf("[App.GenerateInteractiveManual] HTML manual package created successfully at %s", outputPath)
+	}
+	return err
+}
+
+// SessionContext は操作情報の取得結果を表します
+type SessionContext struct {
+	ActiveTitle      string `json:"active_title"`
+	ScreenshotPath   string `json:"screenshot_path"`
+	ScreenshotBase64 string `json:"screenshot_base64"`
+}
+
+// CaptureSession は現在のアクティブウィンドウのタイトルと、デスクトップのスクリーンショットを取得します
+func (a *App) CaptureSession() (*SessionContext, error) {
+	log.Println("[App.CaptureSession] Querying foreground window and capturing screen...")
+
+	// 1. アクティブウィンドウタイトルの取得
+	activeTitle := GetActiveWindowTitle()
+	log.Printf("[App.CaptureSession] Active window title: %s", activeTitle)
+
+	// 2. 一時フォルダにスクリーンショットを保存
+	tempDir := os.TempDir()
+	screenshotFile := filepath.Join(tempDir, fmt.Sprintf("act_gram_capture_%d.png", time.Now().UnixNano()))
+
+	err := CaptureScreen(screenshotFile)
+	if err != nil {
+		log.Printf("[App.CaptureSession] Failed to capture screen: %v", err)
+		return nil, fmt.Errorf("画面のキャプチャに失敗しました: %v", err)
+	}
+	log.Printf("[App.CaptureSession] Screenshot captured successfully: %s", screenshotFile)
+
+	// 3. プレビュー表示用に画像をBase64エンコード
+	data, err := os.ReadFile(screenshotFile)
+	if err != nil {
+		log.Printf("[App.CaptureSession] Failed to read screenshot file: %v", err)
+		return nil, fmt.Errorf("キャプチャ画像の読み込みに失敗しました: %v", err)
+	}
+
+	base64Str := base64.StdEncoding.EncodeToString(data)
+
+	return &SessionContext{
+		ActiveTitle:      activeTitle,
+		ScreenshotPath:   screenshotFile,
+		ScreenshotBase64: base64Str,
+	}, nil
+}
+
+// GenerateScript はプロンプトとセッション情報を元に UWSCR スクリプトを生成します
+func (a *App) GenerateScript(prompt string, sessionContextJSON string) (string, error) {
+	log.Printf("[App.GenerateScript] Generating script. Prompt: %s", prompt)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.cfg == nil {
+		return "", fmt.Errorf("設定がロードされていません")
+	}
+
+	// 1. Brain層（コード生成）のLLMプロバイダーとモデルを取得
+	brainConfig, ok := a.cfg.Layers["brain"]
+	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
+		// デフォルトフォールバック
+		brainConfig = LayerConfig{
+			Provider: "google",
+			Model:    "gemini-flash-lite-latest",
+		}
+	}
+
+	provider := brainConfig.Provider
+	model := brainConfig.Model
+	log.Printf("[App.GenerateScript] Selected LLM: %s (%s)", model, provider)
+
+	apiKey, err := GetAPIKey(provider)
+	if err != nil && provider != "ollama" {
+		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	}
+
+	var llmProvider llm.LLMProvider
+	switch provider {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "ollama":
+		llmProvider = llm.NewOllamaProvider()
+	default:
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", provider)
+	}
+
+	// 2. セッション情報の解析（画像パス of 抽出）
+	screenshotPath := ""
+	activeTitleInfo := ""
+	if sessionContextJSON != "" {
+		var session SessionContext
+		if err := json.Unmarshal([]byte(sessionContextJSON), &session); err == nil {
+			screenshotPath = session.ScreenshotPath
+			if session.ActiveTitle != "" {
+				activeTitleInfo = fmt.Sprintf("現在ユーザーが開いているアクティブウィンドウ: %s\n", session.ActiveTitle)
+			}
+		}
+	}
+
+	// 3. UWSCR生成用のシステムプロンプト定義
+	systemPrompt := `あなたは卓越したRPAスクリプト開発AIです。
+Windows用の自動化スクリプトエンジンである「UWSCR (UWSC互換)」で動作するスクリプト (.uws) を作成してください。
+
+【UWSCR の基本構文ルール】
+1. コメント: // コメントテキスト
+2. 変数宣言: Dim 変数名 = 初期値 (または Dim 変数名)
+3. ウィンドウ制御:
+   - ACW(GETID("ウィンドウタイトル", "クラス名"), x, y, w, h) : ウィンドウのアクティブ化・位置調整
+   - CTRL_WIN(id, CLOSE) : ウィンドウを閉じる
+4. マウス・キーボード操作:
+   - BTN(LEFT, CLICK, x, y, delay) : 指定座標をクリック
+   - KBD(VK_A, CLICK, delay) : キー入力 (VK_RETURN, VK_TAB, VK_BACK などの仮想キー定数を使用)
+   - SENDSTR(id, "文字列") : 指定ウィンドウに文字列を直接送信
+5. 制御構文:
+   - IFB 条件 THEN ... ELSE ... ENDIF (※UWSCの厳格なブロック構文 IFB 〜 THEN 〜 ENDIF を使用してください)
+   - FOR 変数 = 初期値 TO 最大値 ... NEXT
+   - WHILE 条件 ... WEND
+   - SLEEP(秒数) : 例: SLEEP(1) は1秒待機
+6. ダイアログ表示:
+   - MSGBOX("メッセージ内容") : ポップアップダイアログを表示
+7. タイムスタンプ・ログ出力:
+   - UWSCRのテスト実行時や実際の運用時に進捗状況が把握できるよう、各処理ステップの前後で PRINT "[タイムスタンプ] メッセージ" のようにタイムスタンプ付きのログを出力してください。UWSCRの経過時間や日時取得には GETTIME() を使うか、適切な文字列連結を使用してください。
+     例:
+     PRINT "[" + GETTIME() + "] 処理を開始します..."
+
+【act-gram 独自マクロ拡張関数】
+- AI_EVAL("判定・取得したい内容", 画像取得関数等)
+  この関数は、画面上の特定情報やテキストをAIに判断させたい場合に使用できます。戻り値はAIの推論結果テキストです。
+  例: Dim price = AI_EVAL("この伝票の合計金額は数値でいくら？", GetScreenCapture())
+  ※引数の画像取得関数には GetScreenCapture() などのダミー表記が用いられ、act-gram側で実行時に実際のデスクトップキャプチャに差し替わります。
+
+【出力要件】
+- スクリプトコードのみを出力してください。
+- markdown のコードブロック ('''uws ... ''') などで囲まず、純粋なプレーンテキストとして UWSCR スクリプトのみを返してください。説明文や前置きは一切不要です。
+`
+
+	finalPrompt := fmt.Sprintf("%s\n%s\n【指示】\n%s", systemPrompt, activeTitleInfo, prompt)
+
+	// 4. LLMへの問い合わせ
+	resp := llmProvider.GenerateText(finalPrompt, screenshotPath, model)
+	if resp.Error != nil {
+		log.Printf("[App.GenerateScript] Generation failed: %v", resp.Error)
+		return "", resp.Error
+	}
+
+	// markdownブロック等が含まれていた場合のクレンジング
+	cleanCode := cleanGeneratedCode(resp.Text)
+	log.Printf("[App.GenerateScript] Script generated successfully (%d bytes)", len(cleanCode))
+	return cleanCode, nil
+}
+
+// TestRunResult はテスト実行の結果をフロントエンドに返します。
+type TestRunResult struct {
+	Logs    string `json:"logs"`
+	Success bool   `json:"success"`
+}
+
+// TestRunScript は指定された UWSCR コードを一時ファイルに保存して同期的にテスト実行し、ログと結果を返します
+func (a *App) TestRunScript(code string) (*TestRunResult, error) {
+	log.Println("[App.TestRunScript] Starting script test run")
+	
+	tempDir := os.TempDir()
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("act_gram_test_%d.uws", time.Now().UnixNano()))
+	
+	if err := os.WriteFile(tempFile, []byte(code), 0644); err != nil {
+		log.Printf("[App.TestRunScript] Failed to write temporary script file: %v", err)
+		return nil, fmt.Errorf("テスト用スクリプトの作成に失敗しました: %v", err)
+	}
+	defer os.Remove(tempFile)
+
+	if a.orchestrator == nil {
+		return nil, fmt.Errorf("orchestrator is not initialized")
+	}
+
+	// タイムアウトは15秒とする
+	logBuf, success, err := a.orchestrator.RunScriptSync(tempFile, 15)
+	if err != nil {
+		log.Printf("[App.TestRunScript] Execution failed: %v", err)
+		return &TestRunResult{Logs: logBuf, Success: false}, err
+	}
+
+	log.Printf("[App.TestRunScript] Execution finished. Success=%v", success)
+	return &TestRunResult{
+		Logs:    logBuf,
+		Success: success,
+	}, nil
+}
+
+// StopScript は現在実行中の UWSCR スクリプトを強制停止します
+func (a *App) StopScript() error {
+	log.Println("[App.StopScript] Request received to stop execution")
+	if a.orchestrator == nil {
+		return fmt.Errorf("orchestrator is not initialized")
+	}
+	return a.orchestrator.StopCurrentScript()
+}
+
+// CorrectScript は実行時エラーログと元のコードをもとに、AIにコードの修正指示を送り、修復されたUWSCRコードを返します
+func (a *App) CorrectScript(prompt string, code string, errorLog string) (string, error) {
+	log.Printf("[App.CorrectScript] Correcting script due to error. Prompt: %s", prompt)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.cfg == nil {
+		return "", fmt.Errorf("設定がロードされていません")
+	}
+
+	brainConfig, ok := a.cfg.Layers["brain"]
+	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
+		brainConfig = LayerConfig{
+			Provider: "google",
+			Model:    "gemini-flash-lite-latest",
+		}
+	}
+
+	provider := brainConfig.Provider
+	model := brainConfig.Model
+	log.Printf("[App.CorrectScript] Selected LLM for correction: %s (%s)", model, provider)
+
+	apiKey, err := GetAPIKey(provider)
+	if err != nil && provider != "ollama" {
+		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	}
+
+	var llmProvider llm.LLMProvider
+	switch provider {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "ollama":
+		llmProvider = llm.NewOllamaProvider()
+	default:
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", provider)
+	}
+
+	systemPrompt := `あなたは卓越したRPAスクリプト開発AIです。
+UWSCR スクリプト (.uws) のテスト実行でエラーが発生しました。
+元のコードとエラーログ、および当初の指示内容を分析し、エラーを修正した動作可能な UWSCR スクリプトを再生成してください。
+
+【UWSCR の基本構文ルール】
+1. コメント: // コメントテキスト
+2. 変数宣言: Dim 変数名 = 初期値
+3. 制御構文: IFB 条件 THEN ... ENDIF (UWSCの厳格な構文を使用してください。IFB 〜 THEN と ENDIF は必須です)
+4. ループ: FOR/WHILE
+5. タイムスタンプ機能: UWSCRでデバッグや進捗確認を行うため、要所（特に開始、終了、および条件判定時）に PRINT "[タイムスタンプ] メッセージ" のようにタイムスタンプ付きのログを出力してください。UWSCRの経過時間取得には GETTIME() を使うか、適切な文字列連結を使用してください。
+   例:
+   PRINT "[" + GETTIME() + "] 処理を開始します..."
+
+【出力要件】
+- 修正されたスクリプトコードのみを出力してください。
+- markdown のコードブロック ('''uws ... ''') などで囲まず、純粋なプレーンテキストとして UWSCR スクリプトのみを返してください。説明文や前置きは一切不要です。
+`
+
+	finalPrompt := fmt.Sprintf(
+		"%s\n\n【当初の自動化指示】\n%s\n\n【エラーが発生した元のコード】\n%s\n\n【UWSCRの実行エラーログ】\n%s\n\n【指示】\nエラーログを分析し、バグを修正したUWSCRコードを返してください。可能な限りPRINT文で独自のタイムスタンプ付きログ（例: PRINT \"[タイムスタンプ] ログ内容\"）を付与して進捗を出力してください。",
+		systemPrompt, prompt, code, errorLog,
+	)
+
+	resp := llmProvider.GenerateText(finalPrompt, "", model)
+	if resp.Error != nil {
+		log.Printf("[App.CorrectScript] Generation failed: %v", resp.Error)
+		return "", resp.Error
+	}
+
+	cleanCode := cleanGeneratedCode(resp.Text)
+	log.Printf("[App.CorrectScript] Corrected script generated successfully (%d bytes)", len(cleanCode))
+	return cleanCode, nil
+}
+
+// cleanGeneratedCode は生成されたコードから markdown のコードブロック記述などを除去します
+func cleanGeneratedCode(code string) string {
+	code = strings.TrimSpace(code)
+	if strings.HasPrefix(code, "```") {
+		lines := strings.Split(code, "\n")
+		if len(lines) > 2 {
+			startIdx := 1
+			if strings.HasPrefix(lines[0], "```uws") || strings.HasPrefix(lines[0], "```") {
+				startIdx = 1
+			}
+			endIdx := len(lines) - 1
+			if strings.HasPrefix(lines[len(lines)-1], "```") {
+				endIdx = len(lines) - 1
+			}
+			if endIdx > startIdx {
+				code = strings.Join(lines[startIdx:endIdx], "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(code)
+}
+
+// SaveScriptFile は指定されたパスに UWSCR スクリプトコードを保存します
+func (a *App) SaveScriptFile(path string, code string) error {
+	log.Printf("[App.SaveScriptFile] Saving script to: %s", path)
+	if path == "" {
+		return fmt.Errorf("保存先パスが指定されていません")
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[App.SaveScriptFile] Failed to create directories: %v", err)
+		return fmt.Errorf("保存先フォルダの作成に失敗しました: %v", err)
+	}
+
+	err := os.WriteFile(path, []byte(code), 0644)
+	if err != nil {
+		log.Printf("[App.SaveScriptFile] Failed to write file: %v", err)
+		return fmt.Errorf("スクリプトファイルの保存に失敗しました: %v", err)
+	}
+
+	log.Println("[App.SaveScriptFile] Script successfully saved")
+	return nil
+}
+
+// GetDefaultScriptPath はスクリプト保存先のデフォルト絶対パス（カレントディレクトリ\scripts\autoscript.uws）を返します
+func (a *App) GetDefaultScriptPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Printf("[App.GetDefaultScriptPath] Failed to get working directory: %v", err)
+		return "", err
+	}
+	defaultPath := filepath.Join(wd, "scripts", "autoscript.uws")
+	log.Printf("[App.GetDefaultScriptPath] Default script path resolved: %s", defaultPath)
+	return defaultPath, nil
+}
+
+// SelectDirectory はOSネイティブのフォルダ選択ダイアログを開き、選択されたフォルダパスを返します
+func (a *App) SelectDirectory(title string) (string, error) {
+	log.Printf("[App.SelectDirectory] Opening directory dialog. Title: %s", title)
+	selected, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: title,
+	})
+	if err != nil {
+		log.Printf("[App.SelectDirectory] Dialog error: %v", err)
+		return "", err
+	}
+	log.Printf("[App.SelectDirectory] User selected: %s", selected)
+	return selected, nil
+}
+
+// SelectFile はOSネイティブのファイル選択ダイアログを開き、選択されたファイルパスを返します
+func (a *App) SelectFile(title string, displayName string, pattern string) (string, error) {
+	log.Printf("[App.SelectFile] Opening file open dialog. Title: %s, Filter: %s (%s)", title, displayName, pattern)
+	
+	filters := []runtime.FileFilter{}
+	if displayName != "" && pattern != "" {
+		filters = append(filters, runtime.FileFilter{
+			DisplayName: displayName,
+			Pattern:     pattern,
+		})
+	}
+
+	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   title,
+		Filters: filters,
+	})
+	if err != nil {
+		log.Printf("[App.SelectFile] Dialog error: %v", err)
+		return "", err
+	}
+	log.Printf("[App.SelectFile] User selected: %s", selected)
+	return selected, nil
+}
+
+// SelectSaveFile はOSネイティブのファイル保存ダイアログを開き、選択された保存先パスを返します
+func (a *App) SelectSaveFile(title string, defaultName string, displayName string, pattern string) (string, error) {
+	log.Printf("[App.SelectSaveFile] Opening file save dialog. Title: %s, Default: %s", title, defaultName)
+	
+	filters := []runtime.FileFilter{}
+	if displayName != "" && pattern != "" {
+		filters = append(filters, runtime.FileFilter{
+			DisplayName: displayName,
+			Pattern:     pattern,
+		})
+	}
+
+	selected, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           title,
+		DefaultFilename: defaultName,
+		Filters:         filters,
+	})
+	if err != nil {
+		log.Printf("[App.SelectSaveFile] Dialog error: %v", err)
+		return "", err
+	}
+	log.Printf("[App.SelectSaveFile] User selected: %s", selected)
+	return selected, nil
 }

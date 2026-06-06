@@ -1,10 +1,43 @@
+# ビルド成果物
 build/bin
+build/windows/installer/
+
+# フロントエンド依存・成果物
 node_modules
 frontend/dist
 frontend/node_modules/
+frontend/.vite/
+
+# 外部リポジトリ（サブモジュール）
 uwscr_src/
+
+# 設定・認証情報（ローカル専用）
 config.yaml
 temp_exec.uws
+
+# バイナリ
 *.exe
+uwscr.exe
+
+# ログ
 *.log
+
+# エージェント用内部ファイル
 .system_generated/
+
+# 参照用ドキュメント（開発時のみ利用、GitHubには不要）
+docs/
+
+# 生成されたマニュアル出力（大量ファイルになるため除外）
+manual/
+
+# エージェントスキル設定（ローカル環境依存）
+skills/
+
+# テスト用一時スクリプト
+test_ai.uws
+
+# OS生成ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
