@@ -6,7 +6,7 @@
 
   export let importedSteps = null;
 
-  // モード切り替え: 'batch' (一括開発) or 'step' (伴走型ステップ開発)
+  // モード切り替え: 'batch' (ワンショット開発) or 'step' (マルチステップ開発)
   let mode = 'batch';
 
   $: if (importedSteps && importedSteps.length > 0) {
@@ -25,7 +25,7 @@
     showStatus('マニュアル作成から手順をインポートしました！各ステップを直接編集・検証できます。');
   }
 
-  // 一括開発用状態
+  // ワンショット開発用状態
   let prompt = '';
   let generatedCode = '';
   let savePath = '';
@@ -35,7 +35,7 @@
   let isError = false;
   let sessionContext = null;
 
-  // 伴走型ステップ開発用状態
+  // マルチステップ開発用状態
   let steps = [
     {
       id: 1,
@@ -84,7 +84,7 @@
     });
   }
 
-  // --- 一括開発用アクション ---
+  // --- ワンショット開発用アクション ---
   async function handleCapture() {
     isCapturing = true;
     statusMessage = '現在の操作情報を取得中...';
@@ -203,7 +203,7 @@
     }
   }
 
-  // --- 伴走型ステップ開発用アクション ---
+  // --- マルチステップ開発用アクション ---
   function switchMode(newMode) {
     mode = newMode;
     if (mode === 'step' && steps.length === 0) {
@@ -422,13 +422,13 @@
     <p class="subtitle">自然言語と現在の画面状況を組み合わせてUWSCRスクリプトを作成・編集・実行します</p>
     
     <div class="mode-tabs">
-      <button class="mode-tab-btn {mode === 'batch' ? 'active' : ''}" on:click={() => switchMode('batch')}>一括開発</button>
-      <button class="mode-tab-btn {mode === 'step' ? 'active' : ''}" on:click={() => switchMode('step')}>伴走型ステップ開発</button>
+      <button class="mode-tab-btn {mode === 'batch' ? 'active' : ''}" on:click={() => switchMode('batch')}>ワンショット開発</button>
+      <button class="mode-tab-btn {mode === 'step' ? 'active' : ''}" on:click={() => switchMode('step')}>マルチステップ開発</button>
     </div>
   </div>
 
   {#if mode === 'batch'}
-    <!-- 一括開発モード -->
+    <!-- ワンショット開発モード -->
     <div class="workspace-grid">
       <!-- 左ペイン: コンテキスト取得 & プロンプト指示 -->
       <div class="input-panel">
@@ -555,7 +555,7 @@
       </div>
     </div>
   {:else}
-    <!-- 伴走型ステップ開発モード -->
+    <!-- マルチステップ開発モード -->
     <div class="step-workspace-grid">
       <!-- 左ペイン: ステップ一覧 -->
       <div class="step-sidebar">
