@@ -153,7 +153,7 @@
 </script>
 
 <div class="manual-creator-layout">
-  <!-- 1. AIオート・スライサー制御パネル -->
+  <!-- 1. オート・スライサー制御パネル -->
   <div class="control-panel card">
     <div class="panel-header">
       <div class="header-main">
@@ -162,8 +162,8 @@
           <polygon points="10 8 16 12 10 16 10 8"/>
         </svg>
         <div class="header-text">
-          <h2>AI シナリオ自動生成（オート・スライサー）</h2>
-          <p class="description">レコーダーが保存した生の操作ログフォルダを指定すると、AIが論理的ステップに自動分割し、自動再生用コードを含む対話型ガイドを生成します。</p>
+          <h2>シナリオ自動生成（オート・スライサー）</h2>
+          <p class="description">レコーダーが保存した生の操作ログフォルダを指定すると、論理的ステップに自動分割し、自動再生用コードを含む対話型ガイドを生成します。</p>
         </div>
       </div>
     </div>
@@ -303,7 +303,7 @@
       <div class="chat-container">
         {#if chatHistory.length === 0}
           <div class="chat-empty">
-            <p>現在のステップや業務知識について、AIに質問することができます。</p>
+            <p>現在のステップや業務知識について、コパイロットに質問することができます。</p>
             <div class="suggested-chips">
               <button class="chip" on:click={() => { userQuestion = "現在の操作手順について教えてください。"; askAI(); }}>手順を質問</button>
               <button class="chip" on:click={() => { userQuestion = "この画面の入力値の根拠は何ですか？"; askAI(); }}>入力の根拠を質問</button>
@@ -312,7 +312,7 @@
         {/if}
         {#each chatHistory as chat}
           <div class="chat-bubble-wrapper {chat.role === 'user' ? 'user-align' : 'assistant-align'}">
-            <span class="chat-sender">{chat.role === 'user' ? '現場担当者' : 'AIコパイロット'}</span>
+            <span class="chat-sender">{chat.role === 'user' ? '現場担当者' : 'コパイロット'}</span>
             <div class="chat-bubble {chat.role === 'user' ? 'user-bubble' : 'assistant-bubble'}">
               {chat.text}
             </div>

@@ -4,7 +4,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const ServiceName = "UWSCR-act-gram"
+const ServiceName = "UWSCR-actgram"
 
 // SaveAPIKey は指定されたプロバイダーのAPIキーをセキュアに保存します。
 func SaveAPIKey(provider string, key string) error {

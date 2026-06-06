@@ -28,7 +28,7 @@ func NewOrchestrator(app *App) *Orchestrator {
 
 // FindUWSCRPath は優先度に従って uwscr.exe のパスを探索します。
 func (o *Orchestrator) FindUWSCRPath() (string, error) {
-	// 優先度 1: 実行中の act-gram.exe と同じディレクトリ
+	// 優先度 1: 実行中の actgram.exe と同じディレクトリ
 	exePath, err := os.Executable()
 	if err == nil {
 		localPath := filepath.Join(filepath.Dir(exePath), "uwscr.exe")
@@ -50,7 +50,7 @@ func (o *Orchestrator) FindUWSCRPath() (string, error) {
 		return path, nil
 	}
 
-	return "", fmt.Errorf("uwscr.exe が見つかりません。本家UWSCR配布ページ (https://github.com/stuncloud/UWSCR/releases) からダウンロードし、本エージェント (act-gram.exe) と同じディレクトリに配置するか、設定からパスを指定してください。")
+	return "", fmt.Errorf("uwscr.exe が見つかりません。本家UWSCR配布ページ (https://github.com/stuncloud/UWSCR/releases) からダウンロードし、本エージェント (actgram.exe) と同じディレクトリに配置するか、設定からパスを指定してください。")
 }
 
 // StopCurrentScript は現在実行中の UWSCR プロセスを強制終了します。

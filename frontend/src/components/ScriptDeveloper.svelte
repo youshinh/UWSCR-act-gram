@@ -96,7 +96,7 @@
     }
 
     isLoading = true;
-    statusMessage = 'AIスクリプトを生成中...';
+    statusMessage = 'スクリプトを自動生成中...';
     isError = false;
 
     try {
@@ -240,7 +240,7 @@
     step.status = 'generating';
     steps = [...steps];
     isLoading = true;
-    showStatus('AIコードを生成中...');
+    showStatus('コードを自動生成中...');
 
     try {
       const contextJSON = step.sessionContext ? JSON.stringify(step.sessionContext) : '';
@@ -308,13 +308,13 @@
     step.status = 'generating';
     steps = [...steps];
     isLoading = true;
-    showStatus('AIがエラーログを解析してコードを自動修正中...');
+    showStatus('エラーログを解析してコードを自動修正中...');
 
     try {
       const corrected = await App.CorrectScript(step.prompt, step.code, step.logs);
       step.code = corrected;
       step.status = 'idle';
-      showStatus('AIが修正コードを生成しました。再度テスト実行を行ってください。');
+      showStatus('修正コードを自動生成しました。再度テスト実行を行ってください。');
     } catch (err) {
       step.status = 'error';
       showStatus(`自動修正エラー: ${err.message || err}`, true);
@@ -326,7 +326,7 @@
 
   function combineAllSteps() {
     let combined = `// ==========================================\n`;
-    combined += `// UWSCR::act-gram 自動生成・検証済スクリプト\n`;
+    combined += `// UWSCR::actgram 自動生成・検証済スクリプト\n`;
     combined += `// 生成日時: ${new Date().toLocaleString()}\n`;
     combined += `// ==========================================\n\n`;
 
@@ -383,7 +383,7 @@
 
 <div class="developer-container">
   <div class="header-section">
-    <h1>AI スクリプト開発 (UWSCR ジェネレータ)</h1>
+    <h1>スクリプト自動開発 (UWSCR ジェネレータ)</h1>
     <p class="subtitle">自然言語と現在の画面状況を組み合わせて自動化スクリプトを作成・編集・実行します</p>
     
     <div class="mode-tabs">
@@ -460,7 +460,7 @@
               <span class="spinner white-spinner"></span>
               スクリプトを生成中...
             {:else}
-              AI スクリプトを生成する
+              スクリプトを自動生成する
             {/if}
           </button>
         </div>
@@ -599,7 +599,7 @@
                 {#if currentStep.status === 'generating'}
                   <span class="spinner white-spinner"></span> コード生成中...
                 {:else}
-                  AI でこのステップのコードを生成する
+                  このステップのコードを自動生成する
                 {/if}
               </button>
             </div>
@@ -609,7 +609,7 @@
               <div class="step-section-title">
                 <h4>2. UWSCRコード（直接編集して条件分岐を追記可能）</h4>
               </div>
-              <p class="section-desc">AIが生成したコードです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
+              <p class="section-desc">生成されたコードです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
               
               <div class="editor-container step-editor-container">
                 <textarea
@@ -634,7 +634,7 @@
                     ■ 強制停止
                   </button>
                   <button class="btn-solid btn-small correct-btn" on:click={handleCorrectStep} disabled={isLoading || currentStep.status !== 'error' || !currentStep.logs}>
-                    🪄 AIでエラーを自動修正
+                    🪄 エラーを自動修正
                   </button>
                 </div>
               </div>

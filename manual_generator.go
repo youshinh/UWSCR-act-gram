@@ -167,14 +167,14 @@ func GenerateInteractiveScript(steps []ManualStep) (string, error) {
 	}
 
 	// 3. プロンプトの構築
-	systemPrompt := `あなたは卓越したRPAスクリプト開発AIです。
+	systemPrompt := `あなたは卓越したRPAスクリプト自動開発エンジンです。
 入力されたマニュアルのステップ情報を元に、PC上でユーザーと対話しつつ、自動操作を行う UWSCR (UWSC互換) スクリプト (.uws) を作成してください。
 
 【UWSCR インタラクティブ・ガイドスクリプトの書き方】
 1. 各ステップの開始時に MSGBOX("ステップ番号: タイトル\n\n説明文", BTN_OK) を用いてユーザーに操作手順を表示し、OKが押されるのを待ちます。
 2. 自動で操作できる部分がある場合は、MSGBOXの後（または前）に UWSCR の自動操作コマンド (ACW, CLK, KBD, SLEEP) を実行します。
 3. もし、ユーザーによる手動操作を待つ必要がある場合は、MSGBOX で「〇〇の操作を行ってからOKを押してください」と案内します。
-4. act-gramの AI_EVALマクロを組み込んで、ユーザーの操作が成功したかを簡易確認する判定を入れることも可能です。
+4. actgramの AI_EVALマクロを組み込んで、ユーザーの操作が成功したかを簡易確認する判定を入れることも可能です。
    例:
    IFB AI_EVAL("ログイン成功画面になっていますか？", GetScreenCapture()) <> "はい" THEN
        MSGBOX("ログインが確認できません。手順をやり直してください。")
@@ -240,7 +240,7 @@ func buildHTMLContent(steps []ManualStep) string {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>操作プロセス指示書 (act-gram)</title>
+    <title>操作プロセス指示書 (actgram)</title>
     <style>
         :root {
             --bg-color: #ffffff;
@@ -418,7 +418,7 @@ func buildHTMLContent(steps []ManualStep) string {
         <header>
             <div class="header-left">
                 <h1>操作プロセス指示書</h1>
-                <div class="meta-info">作成元: UWSCR::act-gram / 作成日時: %s</div>
+                <div class="meta-info">作成元: UWSCR::actgram / 作成日時: %s</div>
             </div>
             <button class="theme-toggle-btn" onclick="toggleTheme()" aria-label="Toggle dark mode">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>

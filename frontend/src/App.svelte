@@ -30,7 +30,7 @@
     {
       step: 1,
       title: "APIキーとUWSCRの設定",
-      desc: "act-gramを起動したら、まずは画面右上の「設定」ギアアイコンをクリックして設定ドロワーを開きます。ご自身のGoogle/Gemini等のAPIキーを設定し、uwscr.exeのパス（未指定時は自動探索）を確認・保存してください。",
+      desc: "actgramを起動したら、まずは画面右上の「設定」ギアアイコンをクリックして設定ドロワーを開きます。ご自身のGoogle/Gemini等のAPIキーを設定し、uwscr.exeのパス（未指定時は自動探索）を確認・保存してください。",
       imgKey: "step_1.png",
       imgSrc: ""
     },
@@ -43,8 +43,8 @@
     },
     {
       step: 3,
-      title: "AIオート・スライサーによるマニュアル作成",
-      desc: "「マニュアル作成」タブでは、レコーダーが保存した生の操作ログフォルダ（log.jsonが含まれる場所）を指定するだけで、AIが操作の区切りを自律分割して論理的なステップに自動分割します。自動生成されたUWSCRコードと、音声案内TTS、座標ズームと連動した対話型ガイドが瞬時に構築されます。",
+      title: "オート・スライサーによるマニュアル作成",
+      desc: "「マニュアル作成」タブでは、レコーダーが保存した生の操作ログフォルダ（log.jsonが含まれる場所）を指定するだけで、システムが操作の区切りを自律分割して論理的なステップに自動分割します。自動生成されたUWSCRコードと、音声案内TTS、座標ズームと連動した対話型ガイドが瞬時に構築されます。",
       imgKey: "step_3.png",
       imgSrc: ""
     }
@@ -157,7 +157,7 @@
           </svg>
         </button>
       {/if}
-      <img src={isLightMode ? logoLight : logoDark} alt="act-gram logo" class="logo-img" style="height: 28px; width: auto; object-fit: contain;" />
+      <img src={isLightMode ? logoLight : logoDark} alt="actgram logo" class="logo-img" style="height: 28px; width: auto; object-fit: contain;" />
       <div class="brand-text">
         <h1>::UWSCR</h1>
         <span class="subtitle">Control Center</span>
@@ -415,9 +415,9 @@
 
       <div class="drawer-body">
         <div class="drawer-section">
-          <h3>act-gram の基本概念</h3>
+          <h3>actgram の基本概念</h3>
           <p style="font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); margin: 0 0 16px 0;">
-            UWSCR::act-gram は、AIを組み込んだ次世代RPA実行・開発コントロールセンターです。
+            UWSCR::actgram は、次世代RPA実行・開発コントロールセンターです。
             操作の実行、ボトルネックの自動リファクタリング、録画からのマニュアル・スクリプト自動生成などの機能を提供します。
           </p>
         </div>
@@ -443,7 +443,7 @@
         <div class="drawer-section" style="border-top: 1px solid var(--border-color); padding-top: 20px; margin-bottom: 20px;">
           <h3>インタラクティブ実演ガイド</h3>
           <p style="font-size: 0.78rem; line-height: 1.5; color: var(--text-secondary); margin: 0 0 16px 0;">
-            UWSCRが実際にデスクトップ上を操作して、act-gramの各機能の概要を対話形式で案内します。
+            UWSCRが実際にデスクトップ上を操作して、actgramの各機能の概要を対話形式で案内します。
           </p>
           
           <button 
