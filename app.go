@@ -3,6 +3,7 @@ package main
 import (
 	"act_gram/llm"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -158,4 +159,13 @@ func (a *App) SaveUWSCRPath(path string) error {
 	}
 	a.cfg.UWSCRPath = path
 	return SaveConfig(a.cfg)
+}
+
+// GenerateInteractiveManual はフロントエンドから渡されたステップ情報をもとにマニュアルを生成します
+func (a *App) GenerateInteractiveManual(outputPath string, stepsJSON string, useHighQualityTTS bool) error {
+	var steps []ManualStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return fmt.Errorf("JSONのパースに失敗しました: %v", err)
+	}
+	return GenerateManual(outputPath, steps, useHighQualityTTS)
 }

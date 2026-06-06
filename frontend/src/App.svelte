@@ -4,6 +4,7 @@
   import CredentialInput from './components/CredentialInput.svelte';
   import LayerConfig from './components/LayerConfig.svelte';
   import Console from './components/Console.svelte';
+  import ManualCreator from './components/ManualCreator.svelte';
 
   let config = null;
   let isLoading = true;
@@ -45,6 +46,13 @@
         🧠 AIレイヤー設定
       </button>
       <button 
+        class="tab-btn {activeTab === 'manual' ? 'active' : ''}" 
+        on:click={() => activeTab = 'manual'}
+        disabled={isLoading}
+      >
+        📖 マニュアル作成
+      </button>
+      <button 
         class="tab-btn {activeTab === 'run' ? 'active' : ''}" 
         on:click={() => activeTab = 'run'}
         disabled={isLoading}
@@ -65,6 +73,8 @@
         <CredentialInput />
       {:else if activeTab === 'config'}
         <LayerConfig />
+      {:else if activeTab === 'manual'}
+        <ManualCreator />
       {:else}
         <Console />
       {/if}

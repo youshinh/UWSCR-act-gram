@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function FetchModels(arg1:string):Promise<Array<string>>;
 
+export function GenerateInteractiveManual(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
 export function GetConfig():Promise<main.Config>;
 
 export function HasAPIKey(arg1:string):Promise<boolean>;

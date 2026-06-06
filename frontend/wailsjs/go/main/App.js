@@ -6,6 +6,10 @@ export function FetchModels(arg1) {
   return window['go']['main']['App']['FetchModels'](arg1);
 }
 
+export function GenerateInteractiveManual(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GenerateInteractiveManual'](arg1, arg2, arg3);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
