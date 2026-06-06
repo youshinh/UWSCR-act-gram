@@ -759,8 +759,8 @@
   }
 
   .mode-tab-btn.active {
-    background: var(--text-color);
-    color: var(--bg-color);
+    background: var(--accent-color);
+    color: var(--bg-secondary);
     font-weight: 600;
   }
 
@@ -833,7 +833,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-color);
+    background: var(--input-bg);
   }
 
   .capture-placeholder {
@@ -902,7 +902,7 @@
     height: 110px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: var(--bg-color);
+    background: var(--input-bg);
     color: var(--text-color);
     padding: 12px;
     font-family: inherit;
@@ -936,7 +936,7 @@
     height: 100%;
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: var(--bg-color);
+    background: var(--input-bg);
     color: var(--text-color);
     padding: 16px;
     font-family: Consolas, Monaco, 'Courier New', monospace;
@@ -973,7 +973,7 @@
     flex: 1;
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: var(--bg-color);
+    background: var(--input-bg);
     color: var(--text-color);
     padding: 8px 12px;
     font-size: 0.8rem;
@@ -1208,6 +1208,7 @@
   .step-item-card.active {
     border-color: var(--text-color);
     background: var(--accent-soft);
+    border-left: 4px solid var(--accent-color);
   }
 
   .step-item-header {
@@ -1347,7 +1348,7 @@
   .step-capture-box {
     border: 1px dashed var(--border-color);
     border-radius: 6px;
-    background: var(--bg-color);
+    background: var(--input-bg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1428,7 +1429,7 @@
   }
 
   .step-logs-box {
-    background: var(--bg-color);
+    background: var(--input-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 12px 16px;

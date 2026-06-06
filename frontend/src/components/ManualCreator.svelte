@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte';
   import * as wailsRuntime from '../../wailsjs/runtime/runtime.js';
+  import appIcon from '../assets/images/appicon.png';
 
   const App = window.go.main.App;
 
   let currentStep = 0;
   let steps = []; // Goの slicer からフェッチされるステップ
-  let selectedLogDir = ""; // 操作ログディレクトリのパス
+  export let selectedLogDir = ""; // 操作ログディレクトリのパス
   let isGenerating = false;
   let isExecuting = false;
   let isTTSPlaying = false;
@@ -14,29 +15,42 @@
   let chatHistory = [];
 
   let activeStepBase64 = "";
+  let imageLoadError = false;
+
+  let lastProcessedDir = "";
+  $: if (selectedLogDir && selectedLogDir !== lastProcessedDir) {
+    lastProcessedDir = selectedLogDir;
+    handleAutoGenerate();
+  }
 
   // アクティブステップの切り替え監視
   $: activeStep = steps[currentStep] || null;
 
   $: {
     if (activeStep && activeStep.image_path) {
+      imageLoadError = false;
       App.GetImageBase64(activeStep.image_path)
         .then(res => {
-          activeStepBase64 = res;
+          if (res) {
+            activeStepBase64 = res;
+          } else {
+            activeStepBase64 = "";
+            imageLoadError = true;
+          }
         })
         .catch(err => {
           console.error("Failed to load base64 image:", err);
           activeStepBase64 = "";
+          imageLoadError = true;
         });
     } else {
       activeStepBase64 = "";
+      imageLoadError = activeStep ? true : false;
     }
   }
 
-  // オートズーム用座標スタイル
-  $: zoomStyle = activeStep && activeStep.click_x > 0
-    ? `transform: scale(1.6) translate(${50 - (activeStep.click_x / 19.2)}%, ${50 - (activeStep.click_y / 10.8)}%);`
-    : 'transform: scale(1) translate(0, 0);';
+  // オートズーム用座標スタイル (ズーム無効化で全体表示)
+  $: zoomStyle = 'transform: scale(1) translate(0, 0);';
 
   // AI自動スライス呼び出し
   async function handleAutoGenerate() {
@@ -53,7 +67,6 @@
       if (result && result.length > 0) {
         steps = result;
         currentStep = 0;
-        playTTS("録画ログからシナリオを自動生成しました。マニュアルに沿ってステップ実行を開始してください。");
       } else {
         alert("操作ログから有効なステップを検出できませんでした。");
       }
@@ -85,7 +98,6 @@
     try {
       const result = await App.ExecuteStep(currentStep);
       if (result) {
-        playTTS(result.instruction);
         if (currentStep < steps.length - 1) {
           currentStep++;
         }
@@ -176,9 +188,10 @@
         class="btn-generate gradient-btn"
         on:click={handleAutoGenerate}
         disabled={isGenerating}
+        style="display: flex; align-items: center; justify-content: center; gap: 8px;"
       >
         {#if isGenerating}
-          <span class="spinner-inline">🌀</span> 解析記述中...
+          <span class="spinner-mini"></span> 解析記述中...
         {:else}
           録画から自動生成
         {/if}
@@ -191,7 +204,7 @@
     <!-- 左：オートズームプレビュー -->
     <div class="preview-panel card">
       {#if activeStep}
-        <div class="viewport bg-slate-950">
+        <div class="viewport">
           {#if activeStepBase64}
             <img 
               src={activeStepBase64} 
@@ -199,6 +212,11 @@
               class="viewport-img transition-transform duration-700 ease-out"
               style={zoomStyle}
             />
+          {:else if imageLoadError}
+            <div class="empty-viewport">
+              <span class="empty-icon" style="font-size: 2rem; margin-bottom: 8px;">📷</span>
+              <p>プレビュー画像はありません</p>
+            </div>
           {:else}
             <div class="empty-viewport">
               <span class="spinner"></span>
@@ -221,6 +239,10 @@
               <span class="step-badge">ステップ {currentStep + 1}</span>
               {#if isTTSPlaying}
                 <button class="tts-stop-btn" on:click={stopTTS}>🔊 音声を停止</button>
+              {:else}
+                <button class="tts-play-btn" on:click={() => playTTS(activeStep.instruction)} style="background: var(--accent-soft); border: 1px solid var(--border-color); color: var(--accent-color); font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: background-color 0.2s;">
+                  ▶ 音声を再生
+                </button>
               {/if}
             </div>
             <h3 class="step-title">{activeStep.title}</h3>
@@ -237,7 +259,7 @@
         </div>
       {:else}
         <div class="empty-state">
-          <span class="empty-icon">📼</span>
+          <img src={appIcon} alt="App Icon" style="width: 54px; height: 54px; margin-bottom: 12px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3)); object-fit: contain;" />
           <h3>録画データがロードされていません</h3>
           <p>録画ログディレクトリを指定して、上の「録画から自動生成」を実行してください。</p>
         </div>
@@ -477,6 +499,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    background: #000;
   }
 
   .viewport-img {
@@ -514,10 +537,10 @@
     height: 60px;
     margin-left: -30px;
     margin-top: -30px;
-    border: 3px solid rgba(255, 71, 87, 0.8);
+    border: 3px solid var(--accent-red);
     border-radius: 50%;
     pointer-events: none;
-    box-shadow: 0 0 10px rgba(255, 71, 87, 0.4);
+    box-shadow: 0 0 10px var(--accent-red-border);
     opacity: 0;
   }
 
@@ -566,9 +589,9 @@
   }
 
   .tts-stop-btn {
-    background: rgba(255, 71, 87, 0.1);
-    border: 1px solid rgba(255, 71, 87, 0.2);
-    color: #ff4757;
+    background: var(--accent-red-soft);
+    border: 1px solid var(--accent-red-border);
+    color: var(--accent-red);
     font-size: 0.65rem;
     padding: 2px 8px;
     border-radius: 4px;
@@ -880,5 +903,15 @@
   .btn-chat-send:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .spinner-mini {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
   }
 </style>

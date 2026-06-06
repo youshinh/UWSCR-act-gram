@@ -10,6 +10,10 @@ export function CaptureSession() {
   return window['go']['main']['App']['CaptureSession']();
 }
 
+export function CheckAIConnection() {
+  return window['go']['main']['App']['CheckAIConnection']();
+}
+
 export function CorrectScript(arg1, arg2, arg3) {
   return window['go']['main']['App']['CorrectScript'](arg1, arg2, arg3);
 }
@@ -58,8 +62,16 @@ export function HasAPIKey(arg1) {
   return window['go']['main']['App']['HasAPIKey'](arg1);
 }
 
+export function MinimizeWindow() {
+  return window['go']['main']['App']['MinimizeWindow']();
+}
+
 export function ProposeOptimization(arg1, arg2) {
   return window['go']['main']['App']['ProposeOptimization'](arg1, arg2);
+}
+
+export function RestoreWindow() {
+  return window['go']['main']['App']['RestoreWindow']();
 }
 
 export function RunInteractiveGuide() {
@@ -100,6 +112,14 @@ export function SelectFile(arg1, arg2, arg3) {
 
 export function SelectSaveFile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SelectSaveFile'](arg1, arg2, arg3, arg4);
+}
+
+export function StartRecording() {
+  return window['go']['main']['App']['StartRecording']();
+}
+
+export function StopRecording() {
+  return window['go']['main']['App']['StopRecording']();
 }
 
 export function StopScript() {

@@ -37,6 +37,12 @@ func CaptureScreen(outputPath string) error {
 	script := fmt.Sprintf(`
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# Set DPI Aware to get correct physical bounds under Windows DPI Scaling
+$shcore = '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+$type = Add-Type -MemberDefinition $shcore -Name "Win32DPI" -Namespace "Win32" -PassThru
+$type::SetProcessDPIAware()
+
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen
 $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -60,6 +66,10 @@ $bitmap.Dispose()
 
 	// PowerShellを実行して画面をキャプチャ
 	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tempFile.Name())
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000,
+	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("PowerShell実行エラー: %v, 詳細: %s", err, string(output))
 	}

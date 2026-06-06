@@ -7,6 +7,8 @@ export function AskManualContext(arg1:string,arg2:string):Promise<string>;
 
 export function CaptureSession():Promise<main.SessionContext>;
 
+export function CheckAIConnection():Promise<boolean>;
+
 export function CorrectScript(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function DrawMarker(arg1:string,arg2:number,arg3:number):Promise<string>;
@@ -31,7 +33,11 @@ export function GetImageBase64(arg1:string):Promise<string>;
 
 export function HasAPIKey(arg1:string):Promise<boolean>;
 
+export function MinimizeWindow():Promise<void>;
+
 export function ProposeOptimization(arg1:string,arg2:string):Promise<string>;
+
+export function RestoreWindow():Promise<void>;
 
 export function RunInteractiveGuide():Promise<void>;
 
@@ -52,6 +58,10 @@ export function SelectDirectory(arg1:string):Promise<string>;
 export function SelectFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SelectSaveFile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function StartRecording():Promise<void>;
+
+export function StopRecording():Promise<string>;
 
 export function StopScript():Promise<void>;
 

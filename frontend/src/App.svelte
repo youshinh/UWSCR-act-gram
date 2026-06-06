@@ -1,21 +1,26 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { GetConfig, SaveUWSCRPath, SelectFile, RunInteractiveGuide, GetDefaultManualPath, GetImageBase64 } from '../wailsjs/go/main/App.js';
+  import logoDark from './assets/images/logo-dark.png';
+  import logoLight from './assets/images/logo-light.png';
+  import * as wailsRuntime from '../wailsjs/runtime/runtime.js';
   import CredentialInput from './components/CredentialInput.svelte';
   import LayerConfig from './components/LayerConfig.svelte';
   import Console from './components/Console.svelte';
   import ManualCreator from './components/ManualCreator.svelte';
   import ScriptDeveloper from './components/ScriptDeveloper.svelte';
+  import RecSimulator from './components/RecSimulator.svelte';
 
   let config = null;
   let isLoading = true;
-  let activeTab = 'run'; // Default to daily execution tab
+  let activeTab = 'home'; // Default to portal home screen
   let isLightMode = false;
   let showSettingsDrawer = false;
   let showHelpDrawer = false;
   let selectedLanguage = 'ja';
   let uwscrPath = '';
+  let currentLogDir = ''; // Store path for auto-slicer
 
   let isRunningGuide = false;
   let guideError = '';
@@ -51,12 +56,25 @@
       if (config) {
         uwscrPath = config.UWSCRPath || '';
       }
+
+      // レコーダー停止時のイベントを検知してマニュアル生成画面に自動遷移
+      wailsRuntime.EventsOn("recording_stopped", (logDir) => {
+        console.log("[App] recording_stopped received:", logDir);
+        currentLogDir = logDir;
+        activeTab = 'manual';
+      });
     } catch (e) {
       console.error('Failed to load configuration:', e);
     } finally {
       isLoading = false;
     }
   });
+
+  onDestroy(() => {
+    wailsRuntime.EventsOff("recording_stopped");
+  });
+
+
 
   async function browseUWSCRPath() {
     try {
@@ -131,41 +149,75 @@
 <main class="app-container">
   <header class="app-header">
     <div class="brand">
-      <svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-        <line x1="8" y1="21" x2="16" y2="21"/>
-        <line x1="12" y1="17" x2="12" y2="21"/>
-      </svg>
+      {#if activeTab !== 'home'}
+        <button class="back-btn" on:click={() => activeTab = 'home'} aria-label="ホームへ戻る">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+        </button>
+      {/if}
+      <img src={isLightMode ? logoLight : logoDark} alt="act-gram logo" class="logo-img" style="height: 28px; width: auto; object-fit: contain;" />
       <div class="brand-text">
-        <h1>UWSCR::act-gram</h1>
-        <span class="subtitle">AI-Native RPA Control Center</span>
+        <h1>::UWSCR</h1>
+        <span class="subtitle">Control Center</span>
       </div>
     </div>
 
     <div class="header-right">
-      <nav class="nav-tabs">
+      <div class="nav-shortcut-group">
         <button 
-          class="tab-btn {activeTab === 'run' ? 'active' : ''}" 
-          on:click={() => activeTab = 'run'}
-          disabled={isLoading}
+          class="nav-shortcut-btn" 
+          class:active={activeTab === 'run'} 
+          on:click={() => activeTab = 'run'} 
+          title="PLAY: スクリプト実行・分析"
+          aria-label="PLAY screen"
         >
-          スクリプト実行
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
         </button>
+
         <button 
-          class="tab-btn {activeTab === 'dev' ? 'active' : ''}" 
-          on:click={() => activeTab = 'dev'}
-          disabled={isLoading}
+          class="nav-shortcut-btn" 
+          class:active={activeTab === 'rec'} 
+          on:click={() => activeTab = 'rec'} 
+          title="REC: 本格マクロレコーダー"
+          aria-label="REC screen"
         >
-          スクリプト開発
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="8"/>
+          </svg>
         </button>
+
         <button 
-          class="tab-btn {activeTab === 'manual' ? 'active' : ''}" 
-          on:click={() => activeTab = 'manual'}
-          disabled={isLoading}
+          class="nav-shortcut-btn" 
+          class:active={activeTab === 'dev'} 
+          on:click={() => activeTab = 'dev'} 
+          title="DEVELOP: スクリプト開発・自動修正"
+          aria-label="DEVELOP screen"
         >
-          マニュアル作成
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
         </button>
-      </nav>
+
+        <button 
+          class="nav-shortcut-btn" 
+          class:active={activeTab === 'manual'} 
+          on:click={() => activeTab = 'manual'} 
+          title="MANUAL: マニュアル自動生成・再生"
+          aria-label="MANUAL screen"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="divider"></div>
 
       <button class="settings-btn" on:click={openHelp} aria-label="Open help">
         <svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -192,10 +244,59 @@
       </div>
     {:else}
       <div class="tab-content">
-        {#if activeTab === 'manual'}
-          <ManualCreator />
+        {#if activeTab === 'home'}
+          <div class="home-grid" in:fade={{ duration: 150 }}>
+            <button class="home-card" on:click={() => activeTab = 'run'}>
+              <div class="card-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+              </div>
+              <div class="card-title">PLAY</div>
+              <div class="card-desc">実行コンソール</div>
+            </button>
+
+            <button class="home-card" on:click={() => activeTab = 'rec'}>
+              <div class="card-icon rec-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="8"/>
+                </svg>
+              </div>
+              <div class="card-title">REC</div>
+              <div class="card-desc">マクロレコーダー</div>
+            </button>
+
+            <button class="home-card" on:click={() => activeTab = 'dev'}>
+              <div class="card-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="16 18 22 12 16 6"/>
+                  <polyline points="8 6 2 12 8 18"/>
+                </svg>
+              </div>
+              <div class="card-title">DEVELOP</div>
+              <div class="card-desc">スクリプト開発</div>
+            </button>
+
+            <button class="home-card" on:click={() => activeTab = 'manual'}>
+              <div class="card-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+              </div>
+              <div class="card-title">MANUAL</div>
+              <div class="card-desc">マニュアル作成</div>
+            </button>
+          </div>
+        {:else if activeTab === 'manual'}
+          <ManualCreator bind:selectedLogDir={currentLogDir} />
         {:else if activeTab === 'dev'}
           <ScriptDeveloper />
+        {:else if activeTab === 'rec'}
+          <RecSimulator onRecordFinished={(logDir) => {
+            currentLogDir = logDir;
+            activeTab = 'manual';
+          }} />
         {:else}
           <Console />
         {/if}
@@ -400,12 +501,39 @@
     border-bottom: 1px solid var(--border-color);
     z-index: 10;
     transition: background-color 0.3s ease, border-color 0.3s ease;
+    flex-shrink: 0;
   }
 
   .brand {
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  .back-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 0;
+  }
+
+  .back-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+    background: var(--accent-soft);
+  }
+
+  .back-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .logo-svg {
@@ -435,46 +563,69 @@
     gap: 16px;
   }
 
-  .nav-tabs {
+  .nav-shortcut-group {
     display: flex;
-    gap: 4px;
-    background: rgba(0, 0, 0, 0.05);
-    padding: 3px;
-    border-radius: 8px;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
+    padding: 3px;
+    border-radius: 10px;
   }
 
-  :global(html.light-mode) .nav-tabs {
-    background: rgba(0, 0, 0, 0.02);
-  }
-
-  .tab-btn {
+  .nav-shortcut-btn {
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     color: var(--text-secondary);
-    padding: 6px 14px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 0;
   }
 
-  .tab-btn:hover:not(:disabled) {
+  .nav-shortcut-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .nav-shortcut-btn:hover {
     color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateY(-1px);
+  }
+
+  .nav-shortcut-btn:active {
+    transform: translateY(0);
+  }
+
+  .nav-shortcut-btn.active {
+    color: var(--accent-color);
+    background: var(--accent-soft);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  .nav-shortcut-btn.active:hover {
     background: var(--accent-soft);
   }
 
-  .tab-btn.active {
-    background: var(--accent-color);
-    color: var(--bg-primary);
-    font-weight: 600;
-    box-shadow: var(--shadow-sm);
+  .nav-shortcut-btn[aria-label="REC screen"] {
+    color: var(--accent-red);
   }
 
-  .tab-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .nav-shortcut-btn[aria-label="REC screen"].active {
+    background: rgba(255, 71, 87, 0.15);
+    color: #ef4444;
+  }
+
+  .header-right .divider {
+    width: 1px;
+    height: 20px;
+    background-color: var(--border-color);
   }
 
   .settings-btn {
@@ -503,6 +654,91 @@
     height: 16px;
   }
 
+  /* HOME Portal Screen Grid */
+  .home-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+    max-width: 800px;
+    width: 100%;
+    margin: auto;
+    padding: 40px 20px;
+    box-sizing: border-box;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-height: 540px;
+  }
+
+  .home-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 32px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-sm);
+    width: 100%;
+    max-width: 320px;
+    height: 200px;
+    box-sizing: border-box;
+  }
+
+  .home-card:hover {
+    border-color: var(--accent-color);
+    background: var(--accent-soft);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .card-icon {
+    width: 52px;
+    height: 52px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.25s ease;
+  }
+
+  .home-card:hover .card-icon {
+    transform: scale(1.1);
+  }
+
+  .card-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .rec-icon {
+    color: var(--accent-red);
+  }
+
+  .home-card:hover .rec-icon {
+    color: #ef4444;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.4));
+  }
+
+  .card-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  .card-desc {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
   .content-area {
     flex: 1;
     display: flex;
@@ -522,6 +758,8 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    height: 100%;
+    overflow: hidden;
   }
 
   .loader-container {

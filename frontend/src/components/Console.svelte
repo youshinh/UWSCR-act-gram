@@ -1,6 +1,6 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import { RunScript, GetConfig, SelectFile, ProposeOptimization, SaveScriptFile } from '../../wailsjs/go/main/App';
+    import { RunScript, GetConfig, SelectFile, ProposeOptimization, SaveScriptFile, StopScript } from '../../wailsjs/go/main/App';
     import * as wailsRuntime from '../../wailsjs/runtime/runtime.js';
 
     const App = window.go.main.App;
@@ -43,6 +43,16 @@
                 logLine.message.includes('[System] プロセスがエラーで終了しました') ||
                 logLine.message.includes('[Error]')) {
                 isRunning = false;
+                
+                // 実行終了後にウィンドウを自動復元
+                try {
+                    const AppBinding = window.go.main.App;
+                    if (AppBinding && typeof AppBinding.RestoreWindow === 'function') {
+                        AppBinding.RestoreWindow();
+                    }
+                } catch (err) {
+                    console.error("Failed to restore window:", err);
+                }
             }
         });
     });
@@ -61,11 +71,43 @@
         isRunning = true;
         showStatus('スクリプト実行を開始します...', 'success');
 
+        // 実行開始前に画面を最小化して操作対象を遮らないようにする
+        try {
+            const AppBinding = window.go.main.App;
+            if (AppBinding && typeof AppBinding.MinimizeWindow === 'function') {
+                await AppBinding.MinimizeWindow();
+            }
+        } catch (err) {
+            console.error("Failed to minimize window:", err);
+        }
+
         try {
             await RunScript(scriptPath);
         } catch (e) {
             showStatus(`実行開始に失敗しました: ${e.message || e}`, 'error');
             isRunning = false;
+            // 失敗時はウィンドウを復元
+            try {
+                const AppBinding = window.go.main.App;
+                if (AppBinding && typeof AppBinding.RestoreWindow === 'function') {
+                    await AppBinding.RestoreWindow();
+                }
+            } catch (err) {}
+        }
+    }
+
+    async function handleStop() {
+        try {
+            showStatus('スクリプトを強制停止します...', 'success');
+            await StopScript();
+            isRunning = false;
+            // 停止後はウィンドウを復元
+            const AppBinding = window.go.main.App;
+            if (AppBinding && typeof AppBinding.RestoreWindow === 'function') {
+                await AppBinding.RestoreWindow();
+            }
+        } catch (e) {
+            showStatus(`停止に失敗しました: ${e.message || e}`, 'error');
         }
     }
 
@@ -254,13 +296,21 @@
                 </div>
             </div>
 
-            <div class="action-bar">
-                <button class="btn-clear" on:click={clearConsole} disabled={logs.length === 0}>
+             <div class="action-bar">
+                <button class="btn-clear" on:click={clearConsole} disabled={logs.length === 0 || isRunning}>
                     クリア
                 </button>
-                <button class="btn-run" on:click={handleRun} disabled={isRunning}>
-                    {isRunning ? '実行中...' : '実行'}
-                </button>
+                <div class="run-buttons" style="display: flex; gap: 8px;">
+                    {#if isRunning}
+                        <button class="btn-run btn-stop" on:click={handleStop} style="background-color: var(--accent-red); color: white;">
+                            🛑 停止
+                        </button>
+                    {:else}
+                        <button class="btn-run" on:click={handleRun}>
+                            実行
+                        </button>
+                    {/if}
+                </div>
             </div>
         </div>
 

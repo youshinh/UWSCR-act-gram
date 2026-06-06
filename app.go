@@ -31,6 +31,7 @@ type App struct {
 	slicer         *manual.AutoSlicer
 	session        *manual.ManualSession
 	refactorEngine *llm.RefactorEngine
+	recorder       *capture.Recorder
 }
 
 // NewApp creates a new App application struct
@@ -717,16 +718,16 @@ func (a *App) getExecBaseDir() string {
 		return wd
 	}
 
-	// フォールバック: exePathと同じ階層に manual がない場合
-	if _, err := os.Stat(filepath.Join(dir, "manual")); err != nil {
+	// フォールバック: exePathと同じ階層に manual/act_gram_guide がない場合
+	if _, err := os.Stat(filepath.Join(dir, "manual", "act_gram_guide")); err != nil {
 		// cwdを確認
 		wd, _ := os.Getwd()
-		if _, err := os.Stat(filepath.Join(wd, "manual")); err == nil {
+		if _, err := os.Stat(filepath.Join(wd, "manual", "act_gram_guide")); err == nil {
 			return wd
 		}
 		// 親の親（build/bin から見たプロジェクトルート）を確認
 		parentOfParent := filepath.Dir(filepath.Dir(dir))
-		if _, err := os.Stat(filepath.Join(parentOfParent, "manual")); err == nil {
+		if _, err := os.Stat(filepath.Join(parentOfParent, "manual", "act_gram_guide")); err == nil {
 			return parentOfParent
 		}
 	}
@@ -996,4 +997,77 @@ func (a *App) RunInteractiveGuide() error {
 	guidePath := filepath.Join(a.getExecBaseDir(), "manual", "act_gram_guide", "interactive_guide.uws")
 	log.Printf("[App.RunInteractiveGuide] Preparing to run guide script: %s", guidePath)
 	return a.RunScript(guidePath)
+}
+
+// MinimizeWindow はアプリのウィンドウを最小化します
+func (a *App) MinimizeWindow() {
+	runtime.WindowMinimise(a.ctx)
+}
+
+// RestoreWindow はアプリのウィンドウを復元し最前面に表示します
+func (a *App) RestoreWindow() {
+	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(a.ctx)
+}
+
+// CheckAIConnection は設定されているGeminiなどの接続テストを行い、疎通に成功しているかを返します
+func (a *App) CheckAIConnection() bool {
+	if a.cfg == nil {
+		return false
+	}
+	brainCfg, exists := a.cfg.Layers["brain"]
+	if !exists {
+		return false
+	}
+	apiKey, err := GetAPIKey(brainCfg.Provider)
+	if err != nil || apiKey == "" {
+		return false
+	}
+	return true
+}
+
+// StartRecording はマクロ記録を開始します（ウィンドウの自動最小化をトリガー）
+func (a *App) StartRecording() error {
+	log.Println("[App.StartRecording] Starting record session...")
+	
+	timestamp := time.Now().Format("20060102_150405")
+	baseDir := a.getExecBaseDir()
+	logDir := filepath.Join(baseDir, "manual", fmt.Sprintf("recording_%s", timestamp))
+	
+	a.mu.Lock()
+	a.recorder = capture.NewRecorder(a.ctx, logDir)
+	a.mu.Unlock()
+
+	// 最小化
+	a.MinimizeWindow()
+
+	// 記録開始
+	err := a.recorder.Start(func(outputPath string) error {
+		return CaptureScreen(outputPath)
+	})
+	if err != nil {
+		a.RestoreWindow()
+		return fmt.Errorf("レコーダーの起動に失敗: %v", err)
+	}
+
+	return nil
+}
+
+// StopRecording は記録を停止し、記録されたログディレクトリを返します（ウィンドウの自動復元をトリガー）
+func (a *App) StopRecording() (string, error) {
+	log.Println("[App.StopRecording] Stopping record session...")
+	a.mu.Lock()
+	rec := a.recorder
+	a.mu.Unlock()
+
+	if rec == nil {
+		return "", fmt.Errorf("レコーディングが開始されていません")
+	}
+
+	logDir, err := rec.Stop()
+	
+	// 復元
+	a.RestoreWindow()
+
+	return logDir, err
 }
