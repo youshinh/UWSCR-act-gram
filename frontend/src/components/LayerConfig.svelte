@@ -43,10 +43,19 @@
                     }
                 }
 
-                // デフォルトを一括設定モードとして起動する
-                isUnifiedMode = true;
-                unifiedSelection.provider = selections.brain.provider;
-                unifiedSelection.model = selections.brain.model;
+                // 各レイヤーのプロバイダーとモデルがすべて一致している場合は一括設定モード、それ以外は個別設定モード
+                const brain = selections.brain;
+                const eye = selections.eye;
+                const utility = selections.utility;
+
+                if (brain.provider === eye.provider && brain.provider === utility.provider &&
+                    brain.model === eye.model && brain.model === utility.model) {
+                    isUnifiedMode = true;
+                    unifiedSelection.provider = brain.provider;
+                    unifiedSelection.model = brain.model;
+                } else {
+                    isUnifiedMode = false;
+                }
             }
 
             if (isUnifiedMode) {
@@ -65,6 +74,9 @@
         }
     });
 
+    let statusMessage = '';
+    let isSaving = false;
+
     async function loadModelsForLayer(layer) {
         const provider = selections[layer].provider;
         if (!provider) return;
@@ -78,7 +90,6 @@
             const models = modelCache[provider];
             if (models.length > 0 && !models.includes(selections[layer].model)) {
                 selections[layer].model = models[0];
-                await handleSave(layer);
             }
         } catch (e) {
             console.error(`Failed to load models for ${layer}`, e);
@@ -90,14 +101,6 @@
     async function handleProviderChange(layer) {
         selections[layer].model = '';
         await loadModelsForLayer(layer);
-    }
-
-    async function handleSave(layer) {
-        try {
-            await SaveConfig(layer, selections[layer].provider, selections[layer].model);
-        } catch (e) {
-            console.error(`Failed to save config for ${layer}`, e);
-        }
     }
 
     // 一括設定用
@@ -115,7 +118,6 @@
             if (models.length > 0 && !models.includes(unifiedSelection.model)) {
                 unifiedSelection.model = models[0];
             }
-            await handleUnifiedSave();
         } catch (e) {
             console.error(`Failed to load models for unified`, e);
         } finally {
@@ -128,20 +130,29 @@
         await loadModelsForUnified();
     }
 
-    async function handleUnifiedSave() {
-        selections.brain = { ...unifiedSelection };
-        selections.eye = { ...unifiedSelection };
-        selections.utility = { ...unifiedSelection };
-
+    async function applyConfig() {
+        isSaving = true;
+        statusMessage = '';
         try {
-            const layers = {
+            let layers = {};
+            if (isUnifiedMode) {
+                selections.brain = { ...unifiedSelection };
+                selections.eye = { ...unifiedSelection };
+                selections.utility = { ...unifiedSelection };
+            }
+            layers = {
                 brain: selections.brain,
                 eye: selections.eye,
                 utility: selections.utility
             };
             await SaveConfigs(JSON.stringify(layers));
+            statusMessage = '設定を保存・適用しました！';
+            setTimeout(() => { statusMessage = ''; }, 3000);
         } catch (e) {
-            console.error(`Failed to save unified config`, e);
+            console.error(`Failed to save configurations`, e);
+            statusMessage = '設定の保存に失敗しました: ' + (e.message || e);
+        } finally {
+            isSaving = false;
         }
     }
 
@@ -208,7 +219,7 @@
                         {#if isFetchingUnified}
                             <div class="select-loading">モデル取得中...</div>
                         {:else}
-                            <select id="unified-model" bind:value={unifiedSelection.model} on:change={handleUnifiedSave}>
+                            <select id="unified-model" bind:value={unifiedSelection.model}>
                                 {#each modelCache[unifiedSelection.provider] || [] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
@@ -248,7 +259,7 @@
                         {#if isFetching.brain}
                             <div class="select-loading">モデル取得中...</div>
                         {:else}
-                            <select id="brain-model" bind:value={selections.brain.model} on:change={() => handleSave('brain')}>
+                            <select id="brain-model" bind:value={selections.brain.model}>
                                 {#each modelCache[selections.brain.provider] || [] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
@@ -287,7 +298,7 @@
                         {#if isFetching.eye}
                             <div class="select-loading">モデル取得中...</div>
                         {:else}
-                            <select id="eye-model" bind:value={selections.eye.model} on:change={() => handleSave('eye')}>
+                            <select id="eye-model" bind:value={selections.eye.model}>
                                 {#each modelCache[selections.eye.provider] || [] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
@@ -326,7 +337,7 @@
                         {#if isFetching.utility}
                             <div class="select-loading">モデル取得中...</div>
                         {:else}
-                            <select id="utility-model" bind:value={selections.utility.model} on:change={() => handleSave('utility')}>
+                            <select id="utility-model" bind:value={selections.utility.model}>
                                 {#each modelCache[selections.utility.provider] || [] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
@@ -335,6 +346,19 @@
                     </div>
                 </div>
             </div>
+        </div>
+        
+        <div class="apply-action-bar" style="margin-top: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; border-top: 1px solid var(--border-color); padding-top: 20px; width: 100%;">
+            {#if statusMessage}
+                <span class="status-msg" style="font-size: 0.8rem; color: var(--accent-color); font-weight: 500;">{statusMessage}</span>
+            {/if}
+            <button class="btn-solid" on:click={applyConfig} disabled={isSaving} style="background: var(--accent-color); color: var(--bg-primary); border: 1px solid var(--accent-color); font-weight: 600; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
+                {#if isSaving}
+                    <span class="spinner-mini"></span> 保存中...
+                {:else}
+                    設定を保存・適用
+                {/if}
+            </button>
         </div>
     {/if}
 {/if}

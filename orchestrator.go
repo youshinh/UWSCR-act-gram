@@ -108,10 +108,6 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		defer os.Remove(tempPath) // 終了後に一時ファイルを削除
 
 		cmd := exec.Command(uwscrPath, tempPath)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			HideWindow:    true,
-			CreationFlags: 0x08000000,
-		}
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
