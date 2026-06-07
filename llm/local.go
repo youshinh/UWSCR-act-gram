@@ -221,9 +221,9 @@ func (p *LocalProvider) GenerateText(prompt string, imagePath string, model stri
 		return LLMResponse{Text: ollamaResp.Response}
 	}
 
-	// LM Studio / OpenAI互換ローカルLLM
+// LM Studio / OpenAI互換ローカルLLM
 	hostURL := p.getHostURL()
-	// /v1/chat/completions または /api/v1/chat/completions を使用
+	// まずは標準的な /v1/chat/completions をターゲットにする
 	url := hostURL + "/v1/chat/completions"
 
 	type textContent struct {
@@ -280,6 +280,7 @@ func (p *LocalProvider) GenerateText(prompt string, imagePath string, model stri
 		return LLMResponse{Error: err}
 	}
 
+	// ---- 1回目のリクエスト送信 (/v1/chat/completions) ----
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
 	if err != nil {
 		return LLMResponse{Error: err}
@@ -290,9 +291,17 @@ func (p *LocalProvider) GenerateText(prompt string, imagePath string, model stri
 	}
 
 	resp, err := p.client.Do(req)
-	if err != nil {
-		// /v1 がだめなら /api/v1 を試す
+	
+	// エラーが発生した、またはエンドポイントが存在しない(404)などの場合は、/api/v1 側へリトライ
+	if err != nil || (resp != nil && resp.StatusCode == http.StatusNotFound) {
+		if resp != nil {
+			resp.Body.Close() // 1回目の古いボディを確実に閉じる
+		}
+
+		// エンドポイントを /api/v1/chat/completions に切り替え
 		url = hostURL + "/api/v1/chat/completions"
+		
+		// 【重要】jsonBytes から新しく Buffer を作り直してリクエストオブジェクトを再生成！
 		req, err = http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
 		if err != nil {
 			return LLMResponse{Error: err}
@@ -301,20 +310,27 @@ func (p *LocalProvider) GenerateText(prompt string, imagePath string, model stri
 		if p.apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+p.apiKey)
 		}
+		
+		// 再送信
 		resp, err = p.client.Do(req)
 		if err != nil {
-			return LLMResponse{Error: fmt.Errorf("ローカルLLMサーバーへの接続に失敗しました: %v", err)}
+			return LLMResponse{Error: fmt.Errorf("ローカルLLMサーバー(/api/v1)への接続に失敗しました: %v", err)}
 		}
+	} else if err == nil && resp.StatusCode != http.StatusOK {
+		// 404以外のエラー（400や500など）は設定やモデル名の間違いである可能性が高いため、そのままエラーを返す
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return LLMResponse{Error: fmt.Errorf("local llm api status %d: %s", resp.StatusCode, string(bodyBytes))}
+	}
+
+	if err != nil {
+		return LLMResponse{Error: err}
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return LLMResponse{Error: err}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return LLMResponse{Error: fmt.Errorf("local llm api status %d: %s", resp.StatusCode, string(bodyBytes))}
 	}
 
 	type openAIResponse struct {

@@ -615,55 +615,19 @@ type SessionContext struct {
 	ScreenshotBase64 string `json:"screenshot_base64"`
 }
 
-// CaptureSession は現在のアクティブウィンドウのタイトルと、デスクトップのスクリーンショットを取得します
-func (a *App) CaptureSession() (*SessionContext, error) {
-	log.Println("[App.CaptureSession] Querying foreground window and capturing screen...")
-
-	// 1. アクティブウィンドウタイトルの取得
-	activeTitle := GetActiveWindowTitle()
-	log.Printf("[App.CaptureSession] Active window title: %s", activeTitle)
-
-	// 2. 一時フォルダにスクリーンショットを保存
-	tempDir := os.TempDir()
-	screenshotFile := filepath.Join(tempDir, fmt.Sprintf("act_gram_capture_%d.png", time.Now().UnixNano()))
-
-	err := CaptureScreen(screenshotFile)
-	if err != nil {
-		log.Printf("[App.CaptureSession] Failed to capture screen: %v", err)
-		return nil, fmt.Errorf("画面のキャプチャに失敗しました: %v", err)
-	}
-	log.Printf("[App.CaptureSession] Screenshot captured successfully: %s", screenshotFile)
-
-	// 3. プレビュー表示用に画像をBase64エンコード
-	data, err := os.ReadFile(screenshotFile)
-	if err != nil {
-		log.Printf("[App.CaptureSession] Failed to read screenshot file: %v", err)
-		return nil, fmt.Errorf("キャプチャ画像の読み込みに失敗しました: %v", err)
-	}
-
-	base64Str := base64.StdEncoding.EncodeToString(data)
-
-	return &SessionContext{
-		ActiveTitle:      activeTitle,
-		ScreenshotPath:   screenshotFile,
-		ScreenshotBase64: base64Str,
-	}, nil
-}
-
 // GenerateScript はプロンプトとセッション情報を元に UWSCR スクリプトを生成します
 func (a *App) GenerateScript(prompt string, sessionContextJSON string) (string, error) {
 	log.Printf("[App.GenerateScript] Generating script. Prompt: %s", prompt)
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
+	// mutex の保持時間を最小限にするため、設定のコピーを取ったらすぐにアンロックする設計へ変更
 	if a.cfg == nil {
+		a.mu.Unlock()
 		return "", fmt.Errorf("設定がロードされていません")
 	}
 
 	// 1. Brain層（コード生成）のLLMプロバイダーとモデルを取得
 	brainConfig, ok := a.cfg.Layers["brain"]
 	if !ok || brainConfig.Provider == "" || brainConfig.Model == "" {
-		// デフォルトフォールバック
 		brainConfig = LayerConfig{
 			Provider: "google",
 			Model:    "gemini-flash-lite-latest",
@@ -672,19 +636,52 @@ func (a *App) GenerateScript(prompt string, sessionContextJSON string) (string, 
 
 	provider := brainConfig.Provider
 	model := brainConfig.Model
+	
+	// local プロバイダー用のURLとタイプの退避
+	localLLMType := a.cfg.LocalLLMType
+	localLLMURL := a.cfg.LocalLLMURL
+	customBaseURL := a.cfg.CustomBaseURL
+	a.mu.Unlock() // ★ここで一旦アンロックしてメインスレッド保護
+
 	log.Printf("[App.GenerateScript] Selected LLM: %s (%s)", model, provider)
 
-	apiKey, err := GetAPIKey(provider)
-	if err != nil && provider != "ollama" {
-		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	// APIキーの取得 (local または ollama の場合は空でも許容する)
+	var apiKey string
+	var err error
+	if provider != "local" && provider != "ollama" {
+		apiKey, err = GetAPIKey(provider)
+		if err != nil {
+			log.Printf("[App.GenerateScript] API key retrieval error: %v", err)
+			return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+		}
+	} else {
+		// ローカルLLMの場合はエラーを無視して登録されているキーがあれば使う（通常は空）
+		apiKey, _ = GetAPIKey("local")
 	}
 
-	llmProvider, err := a.getLLMProviderHelper(provider, apiKey)
-	if err != nil {
-		return "", err
+	// 安全にプロバイダーを生成
+	var llmProvider llm.LLMProvider
+	switch provider {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "openai":
+		llmProvider = llm.NewOpenAIProvider(apiKey, "https://api.openai.com/v1")
+	case "custom":
+		if customBaseURL == "" { customBaseURL = "http://localhost:8080/v1" }
+		llmProvider = llm.NewOpenAIProvider(apiKey, customBaseURL)
+	case "local", "ollama":
+		if localLLMType == "" { localLLMType = "ollama" }
+		if localLLMURL == "" {
+			if localLLMType == "ollama" { localLLMURL = "http://localhost:11434" } else { localLLMURL = "http://localhost:1234" }
+		}
+		llmProvider = llm.NewLocalProvider(localLLMType, localLLMURL, apiKey)
+	default:
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", provider)
 	}
 
-	// 2. セッション情報の解析（画像パス of 抽出）
+	// 2. セッション情報の解析（画像パスの抽出）
 	screenshotPath := ""
 	activeTitleInfo := ""
 	if sessionContextJSON != "" {
@@ -697,7 +694,7 @@ func (a *App) GenerateScript(prompt string, sessionContextJSON string) (string, 
 		}
 	}
 
-	// RAGコンテキストの取得
+	// RAGコンテキストの取得 (Mutex保護下にないため安全)
 	ragContext := ""
 	if a.rag != nil {
 		ragContext = a.rag.SearchRelevantContext(prompt, 3)
@@ -788,8 +785,15 @@ func (a *App) TestRunScript(code string) (*TestRunResult, error) {
 		return nil, fmt.Errorf("orchestrator is not initialized")
 	}
 
-	// タイムアウトは15秒とする
-	logBuf, success, err := a.orchestrator.RunScriptSync(tempFile, 15)
+	// ★ 設定ファイルからタイムアウト（秒）を取得
+	a.mu.Lock()
+	timeoutSec := a.cfg.TestTimeout
+	a.mu.Unlock()
+
+	log.Printf("[App.TestRunScript] Executing script with timeout: %d seconds", timeoutSec)
+
+	// 固定値「15」を「timeoutSec」に書き換え
+	logBuf, success, err := a.orchestrator.RunScriptSync(tempFile, timeoutSec)
 	if err != nil {
 		log.Printf("[App.TestRunScript] Execution failed: %v", err)
 		return &TestRunResult{Logs: logBuf, Success: false}, err
@@ -815,9 +819,8 @@ func (a *App) StopScript() error {
 func (a *App) CorrectScript(prompt string, code string, errorLog string) (string, error) {
 	log.Printf("[App.CorrectScript] Correcting script due to error. Prompt: %s", prompt)
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.cfg == nil {
+		a.mu.Unlock()
 		return "", fmt.Errorf("設定がロードされていません")
 	}
 
@@ -831,16 +834,49 @@ func (a *App) CorrectScript(prompt string, code string, errorLog string) (string
 
 	provider := brainConfig.Provider
 	model := brainConfig.Model
+
+	// local プロバイダー用のURLとタイプの退避
+	localLLMType := a.cfg.LocalLLMType
+	localLLMURL := a.cfg.LocalLLMURL
+	customBaseURL := a.cfg.CustomBaseURL
+	a.mu.Unlock() // ★ここでアンロックしてメインスレッドを保護
+
 	log.Printf("[App.CorrectScript] Selected LLM for correction: %s (%s)", model, provider)
 
-	apiKey, err := GetAPIKey(provider)
-	if err != nil && provider != "ollama" {
-		return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+	// APIキーの取得 (local または ollama の場合は空でも許容する)
+	var apiKey string
+	var err error
+	if provider != "local" && provider != "ollama" {
+		apiKey, err = GetAPIKey(provider)
+		if err != nil {
+			log.Printf("[App.CorrectScript] API key retrieval error: %v", err)
+			return "", fmt.Errorf("APIキーの取得に失敗しました: %v", err)
+		}
+	} else {
+		apiKey, _ = GetAPIKey("local")
 	}
 
-	llmProvider, err := a.getLLMProviderHelper(provider, apiKey)
-	if err != nil {
-		return "", err
+	// 安全にプロバイダーを生成
+	var llmProvider llm.LLMProvider
+	switch provider {
+	case "google":
+		llmProvider = llm.NewGeminiProvider(apiKey)
+	case "anthropic":
+		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "openai":
+		llmProvider = llm.NewOpenAIProvider(apiKey, "https://api.openai.com/v1")
+	case "custom":
+		if customBaseURL == "" { customBaseURL = "http://localhost:8080/v1" }
+		llmProvider = llm.NewOpenAIProvider(apiKey, customBaseURL)
+	case "local", "ollama":
+		if localLLMType == "" { localLLMType = "ollama" }
+		if localLLMURL == "" {
+			if localLLMType == "ollama" { localLLMURL = "http://localhost:11434" } else { localLLMURL = "http://localhost:1234" }
+		}
+		llmProvider = llm.NewLocalProvider(localLLMType, localLLMURL, apiKey)
+	default:
+		// string型の戻り値には nil ではなく "" (空文字) を使用します
+		return "", fmt.Errorf("未サポートのプロバイダーです: %s", provider)
 	}
 
 	// RAGコンテキストの取得
@@ -1170,6 +1206,11 @@ func (a *App) ExecuteStep(stepIdx int) (*manual.ManualStep, error) {
 		return nil, fmt.Errorf("orchestrator is not initialized")
 	}
 
+	// ★ タイムアウト値を取得
+	a.mu.Lock()
+	timeoutSec := a.cfg.TestTimeout
+	a.mu.Unlock()
+
 	runSyncHelper := func(code string) (string, bool, error) {
 		tempDir := os.TempDir()
 		tempFile := filepath.Join(tempDir, fmt.Sprintf("act_gram_step_exec_%d.uws", time.Now().UnixNano()))
@@ -1178,7 +1219,8 @@ func (a *App) ExecuteStep(stepIdx int) (*manual.ManualStep, error) {
 		}
 		defer os.Remove(tempFile)
 
-		return a.orchestrator.RunScriptSync(tempFile, 15)
+		// 固定値「15」を「timeoutSec」に書き換え
+		return a.orchestrator.RunScriptSync(tempFile, timeoutSec)
 	}
 
 	step, err := a.session.ExecuteStep(stepIdx, runSyncHelper)
@@ -1187,6 +1229,27 @@ func (a *App) ExecuteStep(stepIdx int) (*manual.ManualStep, error) {
 		return nil, err
 	}
 	return step, nil
+}
+
+// SaveTestTimeout はスクリプトテスト実行時のタイムアウト（秒）を保存します
+func (a *App) SaveTestTimeout(timeout int) error {
+	log.Printf("[App.SaveTestTimeout] Saving test timeout: %d seconds", timeout)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	
+	if a.cfg == nil {
+		var err error
+		a.cfg, err = LoadConfig()
+		if err != nil {
+			return err
+		}
+	}
+	
+	if timeout <= 0 {
+		timeout = 30
+	}
+	a.cfg.TestTimeout = timeout
+	return SaveConfig(a.cfg)
 }
 
 // AskManualContext はマニュアルに紐づく質問に対してRAGと画面キャプチャをベースに推論回答します

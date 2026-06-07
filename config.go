@@ -22,6 +22,7 @@ type Config struct {
 	CustomBaseURL   string                 `yaml:"custom_base_url"`
 	LocalLLMType    string                 `yaml:"local_llm_type"`
 	LocalLLMURL     string                 `yaml:"local_llm_url"`
+	TestTimeout     int                    `yaml:"test_timeout"`
 	Layers          map[string]LayerConfig `yaml:"layers"`
 	UseUnifiedModel bool                   `yaml:"use_unified_model"`
 }
@@ -55,6 +56,7 @@ func LoadConfig() (*Config, error) {
 		UseUnifiedModel: true,
 		LocalLLMType:    "ollama",
 		LocalLLMURL:     "",
+		TestTimeout:     60,
 		Layers: map[string]LayerConfig{
 			"brain":   {Provider: "google", Model: "gemini-flash-lite-latest"},
 			"eye":     {Provider: "google", Model: "gemini-flash-lite-latest"},
@@ -98,6 +100,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if config.LocalLLMType == "" {
 		config.LocalLLMType = "ollama"
+	}
+	if config.TestTimeout <= 0 {
+		config.TestTimeout = 30 // 未指定やマイナス値なら30秒に自動補正
 	}
 
 	// "ollama" プロバイダーを "local" プロバイダーに自動移行

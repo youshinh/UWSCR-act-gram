@@ -50,6 +50,7 @@ func (s *LocalServer) Shutdown() error {
 }
 
 func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("[DEBUG 1] /ai_eval リクエストを受信しました")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -60,14 +61,12 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Read body error", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("[DEBUG 2] リクエストボディの読み込み完了")
 
 	var req AIRequest
-	// 1. 通常のパース
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		// 2. Windowsコマンドラインのエスケープ問題（全体がエスケープ付きの文字列として送られてくる）へのフォールバック
 		var jsonStr string
 		if errStr := json.Unmarshal(bodyBytes, &jsonStr); errStr == nil {
-			// ネストされたJSON文字列を再度パース
 			if errRetry := json.Unmarshal([]byte(jsonStr), &req); errRetry != nil {
 				http.Error(w, fmt.Sprintf("Failed to parse nested JSON: %v", errRetry), http.StatusBadRequest)
 				return
@@ -77,15 +76,19 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	fmt.Printf("[DEBUG 3] JSONパース成功: Prompt=%s, ImagePath=%s\n", req.Prompt, req.ImagePath)
 
 	// 3. 設定情報の取得
+	fmt.Println("[DEBUG 4] LoadConfig() を呼び出します...")
 	cfg, err := LoadConfig()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("[DEBUG 5] LoadConfig() 成功: Provider=%s, Model=%s, LocalLLMType=%s, LocalLLMURL=%s\n", 
+		cfg.Layers["brain"].Provider, cfg.Layers["brain"].Model, cfg.LocalLLMType, cfg.LocalLLMURL)
 
-	// 4. レイヤーの決定 (画像がある場合は Eye層、ない場合は Brain層)
+	// 4. レイヤーの決定
 	layerName := "brain"
 	if req.ImagePath != "" {
 		layerName = "eye"
@@ -98,73 +101,46 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. APIキーのセキュア取得
+	fmt.Printf("[DEBUG 6] GetAPIKey(%s) を呼び出します...\n", layerConfig.Provider)
 	apiKey, err := GetAPIKey(layerConfig.Provider)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get API key: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("[DEBUG 7] APIキー取得処理を通過")
 
-	// 6. LLMプロバイダーの初期化と実行
+	// 6. LLMプロバイダーの初期化
 	var provider llm.LLMProvider
+	// (switch文のロジックはそのまま維持してください)
 	switch layerConfig.Provider {
-	case "google":
-		provider = llm.NewGeminiProvider(apiKey)
-	case "anthropic":
-		provider = llm.NewAnthropicProvider(apiKey)
-	case "openai":
-		provider = llm.NewOpenAIProvider(apiKey, "https://api.openai.com/v1")
-	case "custom":
-		baseURL := cfg.CustomBaseURL
-		if baseURL == "" {
-			baseURL = "http://localhost:8080/v1"
-		}
-		provider = llm.NewOpenAIProvider(apiKey, baseURL)
+	// ... (中略) ...
 	case "local":
 		llmType := cfg.LocalLLMType
 		baseURL := cfg.LocalLLMURL
-		if llmType == "" {
-			llmType = "ollama"
-		}
+		if llmType == "" { llmType = "ollama" }
 		if baseURL == "" {
-			if llmType == "ollama" {
-				baseURL = "http://localhost:11434"
-			} else {
-				baseURL = "http://localhost:1234"
-			}
-		}
-		provider = llm.NewLocalProvider(llmType, baseURL, apiKey)
-	case "ollama":
-		// 後方互換フォールバック
-		llmType := cfg.LocalLLMType
-		baseURL := cfg.LocalLLMURL
-		if llmType == "" {
-			llmType = "ollama"
-		}
-		if baseURL == "" {
-			if llmType == "ollama" {
-				baseURL = "http://localhost:11434"
-			} else {
-				baseURL = "http://localhost:1234"
-			}
+			if llmType == "ollama" { baseURL = "http://localhost:11434" } else { baseURL = "http://localhost:1234" }
 		}
 		provider = llm.NewLocalProvider(llmType, baseURL, apiKey)
 	default:
-		http.Error(w, fmt.Sprintf("Unsupported provider: %s", layerConfig.Provider), http.StatusBadRequest)
-		return
+		// デフォルト処理
 	}
 
 	// 7. LLM推論の実行
-	fmt.Printf("[Local API] Executing prompt via layer '%s' (%s - %s). Image: %s\n", 
-		layerName, layerConfig.Provider, layerConfig.Model, req.ImagePath)
+	fmt.Printf("[DEBUG 8] LM Studioへのリクエストを送信直前です！ URL: %s, Model: %s\n", cfg.LocalLLMURL, layerConfig.Model)
 	
 	resp := provider.GenerateText(req.Prompt, req.ImagePath, layerConfig.Model)
+	
+	fmt.Println("[DEBUG 9] LM Studioからレスポンスが返ってきました！")
 	if resp.Error != nil {
+		fmt.Printf("[DEBUG ERROR] 推論エラーが発生: %v\n", resp.Error)
 		http.Error(w, fmt.Sprintf("LLM inference error: %v", resp.Error), http.StatusInternalServerError)
 		return
 	}
 
-	// 8. テキストレスポンス返却 (UWSCRで受け取るためプレーンテキストで返却)
+	// 8. テキストレスポンス返却
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(resp.Text))
+	fmt.Println("[DEBUG 10] クライアント（UWSCR/UI）へ正常に応答を書き込みました")
 }

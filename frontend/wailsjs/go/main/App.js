@@ -6,10 +6,6 @@ export function AskManualContext(arg1, arg2) {
   return window['go']['main']['App']['AskManualContext'](arg1, arg2);
 }
 
-export function CaptureSession() {
-  return window['go']['main']['App']['CaptureSession']();
-}
-
 export function CheckAIConnection() {
   return window['go']['main']['App']['CheckAIConnection']();
 }
@@ -128,6 +124,10 @@ export function SaveLocalLLMConfig(arg1, arg2) {
 
 export function SaveScriptFile(arg1, arg2) {
   return window['go']['main']['App']['SaveScriptFile'](arg1, arg2);
+}
+
+export function SaveTestTimeout(arg1) {
+  return window['go']['main']['App']['SaveTestTimeout'](arg1);
 }
 
 export function SaveUWSCRPath(arg1) {

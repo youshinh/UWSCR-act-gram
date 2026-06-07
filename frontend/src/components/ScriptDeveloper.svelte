@@ -70,16 +70,37 @@
   }
 
   onMount(async () => {
-    window.addEventListener('click', closeContextMenu);
-    try {
-      savePath = await App.GetDefaultScriptPath();
-    } catch (err) {
-      showStatus('デフォルト保存パスの取得に失敗しました', true);
-    }
-    return () => {
-      window.removeEventListener('click', closeContextMenu);
-    };
-  });
+        try {
+            savePath = await App.GetDefaultScriptPath();
+        } catch (err) {
+            showStatus('デフォルト保存パスの取得に失敗しました', true);
+        }
+        window.addEventListener('click', closeContextMenu);
+
+        // ★追加: テスト実行中のUWSCRリアルタイムログを画面側でキャッチする
+        wailsRuntime.EventsOn('uwscr_log', (logLine) => {
+            // 1. ワンショット開発モードのテスト実行中なら batchLogs にリアルタイム追記
+            if (isBatchTestRunning) {
+                batchLogs = (batchLogs ? batchLogs + "\n" : "") + logLine.message;
+            }
+            
+            // 2. マルチステップ開発モードのテスト実行中なら、選択中のステップのlogsにリアルタイム追記
+            if (isTestRunning && steps[activeStepIndex]) {
+                steps[activeStepIndex].logs = (steps[activeStepIndex].logs ? steps[activeStepIndex].logs + "\n" : "") + logLine.message;
+                steps = [...steps]; // Svelteのリアクティビティをトリガー
+            }
+        });
+
+        return () => {
+            window.removeEventListener('click', closeContextMenu);
+        };
+    });
+
+    onDestroy(() => {
+        window.removeEventListener('click', closeContextMenu);
+        // ★追加: コンポーネント破棄時にイベント購読を解除してメモリリークを防ぐ
+        wailsRuntime.EventsOff('uwscr_log');
+    });
 
   function parseErrorLine(logs) {
     if (!logs) return null;
@@ -405,6 +426,7 @@
       return;
     }
 
+    step.logs = ''; // ★実行前にこのステップのログ表示をクリア！
     step.status = 'running';
     steps = [...steps];
     isTestRunning = true;
@@ -412,7 +434,7 @@
 
     try {
       const result = await App.TestRunScript(step.code);
-      step.logs = result.logs;
+      // ★修正: 完了時はステータスの同期のみ行う（ログはリアルタイム側で格納済み）
       step.status = result.success ? 'success' : 'error';
       step.highlightedLine = result.success ? null : parseErrorLine(result.logs);
       if (result.success) {
@@ -559,13 +581,14 @@
       return;
     }
 
+    batchLogs = ''; // ★最初の一括上書きではなく、実行前にまずログを綺麗にクリアする！
     batchStatus = 'running';
     isBatchTestRunning = true;
     showStatus('UWSCRでテスト実行中...');
 
     try {
       const result = await App.TestRunScript(generatedCode);
-      batchLogs = result.logs;
+      // ★修正: 完了時はログ全体を再設定するのではなく、ステータス判定とハイライト処理だけを行う
       batchStatus = result.success ? 'success' : 'error';
       batchHighlightedLine = result.success ? null : parseErrorLine(result.logs);
       if (result.success) {

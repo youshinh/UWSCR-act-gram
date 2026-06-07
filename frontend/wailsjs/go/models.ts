@@ -22,6 +22,7 @@ export namespace main {
 	    CustomBaseURL: string;
 	    LocalLLMType: string;
 	    LocalLLMURL: string;
+	    TestTimeout: number;
 	    Layers: Record<string, LayerConfig>;
 	    UseUnifiedModel: boolean;
 	
@@ -38,6 +39,7 @@ export namespace main {
 	        this.CustomBaseURL = source["CustomBaseURL"];
 	        this.LocalLLMType = source["LocalLLMType"];
 	        this.LocalLLMURL = source["LocalLLMURL"];
+	        this.TestTimeout = source["TestTimeout"];
 	        this.Layers = this.convertValues(source["Layers"], LayerConfig, true);
 	        this.UseUnifiedModel = source["UseUnifiedModel"];
 	    }
@@ -73,22 +75,6 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.type = source["type"];
 	        this.url = source["url"];
-	    }
-	}
-	export class SessionContext {
-	    active_title: string;
-	    screenshot_path: string;
-	    screenshot_base64: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SessionContext(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.active_title = source["active_title"];
-	        this.screenshot_path = source["screenshot_path"];
-	        this.screenshot_base64 = source["screenshot_base64"];
 	    }
 	}
 	export class TestRunResult {

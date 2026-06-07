@@ -20,44 +20,36 @@
     let optimizationResult = null;
     let originalCode = "";
 
-    onMount(async () => {
+onMount(async () => {
         try {
-            config = await GetConfig();
-        } catch (e) {
-            console.error('Failed to load config in console', e);
+            savePath = await App.GetDefaultScriptPath();
+        } catch (err) {
+            showStatus('デフォルト保存パスの取得に失敗しました', true);
         }
+        window.addEventListener('click', closeContextMenu);
 
-        // UWSCRログイベントの監視を開始
+        // ★追加: テスト実行中のUWSCRリアルタイムログを画面側でキャッチする
         wailsRuntime.EventsOn('uwscr_log', (logLine) => {
-            logs = [...logs, logLine];
+            // 1. ワンショット開発モードのテスト実行中なら batchLogs にリアルタイム追記
+            if (isBatchTestRunning) {
+                batchLogs = (batchLogs ? batchLogs + "\n" : "") + logLine.message;
+            }
             
-            // ログが追加されたら一番下まで自動スクロール
-            setTimeout(() => {
-                if (logContainer) {
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
-            }, 10);
-
-            // プロセス終了等の特定システムメッセージを検知して状態更新
-            if (logLine.message.includes('[System] プロセスが正常に終了しました。') || 
-                logLine.message.includes('[System] プロセスがエラーで終了しました') ||
-                logLine.message.includes('[Error]')) {
-                isRunning = false;
-                
-                // 実行終了後にウィンドウを自動復元
-                try {
-                    const AppBinding = window.go.main.App;
-                    if (AppBinding && typeof AppBinding.RestoreWindow === 'function') {
-                        AppBinding.RestoreWindow();
-                    }
-                } catch (err) {
-                    console.error("Failed to restore window:", err);
-                }
+            // 2. マルチステップ開発モードのテスト実行中なら、選択中のステップのlogsにリアルタイム追記
+            if (isTestRunning && steps[activeStepIndex]) {
+                steps[activeStepIndex].logs = (steps[activeStepIndex].logs ? steps[activeStepIndex].logs + "\n" : "") + logLine.message;
+                steps = [...steps]; // Svelteのリアクティビティをトリガー
             }
         });
+
+        return () => {
+            window.removeEventListener('click', closeContextMenu);
+        };
     });
 
     onDestroy(() => {
+        window.removeEventListener('click', closeContextMenu);
+        // ★追加: コンポーネント破棄時にイベント購読を解除してメモリリークを防ぐ
         wailsRuntime.EventsOff('uwscr_log');
     });
 
