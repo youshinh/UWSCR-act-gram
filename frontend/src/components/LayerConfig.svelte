@@ -39,27 +39,27 @@
         try {
             config = await GetConfig();
             if (config) {
-                // use_unified_model フラグ of 復元
-                if (config.use_unified_model !== undefined) {
-                    isUnifiedMode = !!config.use_unified_model;
-                } else if (config.layers) {
-                    // 古い設定ファイル of 互換性：全て同じなら一括設定と判定
-                    const layers = config.layers;
+                // UseUnifiedModel フラグの復元 (WailsはGoのPascalCaseフィールド名でJSONを返す)
+                if (config.UseUnifiedModel !== undefined) {
+                    isUnifiedMode = !!config.UseUnifiedModel;
+                } else if (config.Layers) {
+                    // 古い設定ファイルの互換性：全て同じなら一括設定と判定
+                    const layers = config.Layers;
                     if (layers.brain && layers.eye && layers.utility &&
-                        layers.brain.provider === layers.eye.provider && layers.brain.provider === layers.utility.provider &&
-                        layers.brain.model === layers.eye.model && layers.brain.model === layers.utility.model) {
+                        layers.brain.Provider === layers.eye.Provider && layers.brain.Provider === layers.utility.Provider &&
+                        layers.brain.Model === layers.eye.Model && layers.brain.Model === layers.utility.Model) {
                         isUnifiedMode = true;
                     } else {
                         isUnifiedMode = false;
                     }
                 }
 
-                // 既存設定 of 反映
-                if (config.layers) {
+                // 既存設定の反映
+                if (config.Layers) {
                     for (const layer of ['brain', 'eye', 'utility']) {
-                        if (config.layers[layer]) {
-                            selections[layer].provider = config.layers[layer].provider;
-                            selections[layer].model = config.layers[layer].model;
+                        if (config.Layers[layer]) {
+                            selections[layer].provider = config.Layers[layer].Provider;
+                            selections[layer].model = config.Layers[layer].Model;
                         }
                     }
                 }

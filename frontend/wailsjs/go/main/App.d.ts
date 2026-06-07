@@ -85,6 +85,6 @@ export function StopScript():Promise<void>;
 
 export function SyncUWSCRReference():Promise<void>;
 
-export function TestAPIKeyConnection(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function TestAPIKeyConnection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function TestRunScript(arg1:string):Promise<main.TestRunResult>;

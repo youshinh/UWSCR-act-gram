@@ -292,8 +292,9 @@ func (a *App) SaveCustomBaseURL(baseURL string) error {
 }
 
 // TestAPIKeyConnection は指定されたプロバイダーとAPIキーを用いて疎通確認（テスト接続）を行います。
-func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL string) (string, error) {
-	log.Printf("[App.TestAPIKeyConnection] Testing connection for provider: %s", provider)
+// localLLMType は local プロバイダー選択時のみ使用します（UIの現在選択値を渡す）。
+func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL string, localLLMType string) (string, error) {
+	log.Printf("[App.TestAPIKeyConnection] Testing connection for provider: %s, localLLMType=%s", provider, localLLMType)
 	
 	// キーが空の場合は、現在登録されているキーを使用する
 	if key == "" && provider != "local" {
@@ -351,28 +352,39 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
 
 	case "local":
-		a.mu.Lock()
-		llmType := a.cfg.LocalLLMType
+		// UIから渡された localLLMType を優先し、なければ保存済み設定を使用
+		if localLLMType == "" {
+			a.mu.Lock()
+			localLLMType = a.cfg.LocalLLMType
+			a.mu.Unlock()
+		}
+		if localLLMType == "" {
+			localLLMType = "ollama"
+		}
+
+		// URLが渡されなければ保存済み設定を使用
 		if customBaseURL == "" {
+			a.mu.Lock()
 			customBaseURL = a.cfg.LocalLLMURL
-		}
-		a.mu.Unlock()
-		
-		if llmType == "" {
-			llmType = "ollama"
+			a.mu.Unlock()
 		}
 		if customBaseURL == "" {
-			if llmType == "ollama" {
+			if localLLMType == "ollama" {
 				customBaseURL = "http://localhost:11434"
 			} else {
 				customBaseURL = "http://localhost:1234"
 			}
 		}
 
-		providerImpl := llm.NewLocalProvider(llmType, customBaseURL, key)
+		// APIキーはオプション（local は空でも可）
+		if key == "" {
+			key, _ = GetAPIKey("local")
+		}
+
+		providerImpl := llm.NewLocalProvider(localLLMType, customBaseURL, key)
 		models, err := providerImpl.GetAvailableModels()
 		if err != nil {
-			return "", fmt.Errorf("ローカルLLM (%s) 接続テスト失敗: %v", llmType, err)
+			return "", fmt.Errorf("ローカルLLM (%s) 接続テスト失敗: %v", localLLMType, err)
 		}
 		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
 

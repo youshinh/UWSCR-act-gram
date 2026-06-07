@@ -166,8 +166,8 @@ export function SyncUWSCRReference() {
   return window['go']['main']['App']['SyncUWSCRReference']();
 }
 
-export function TestAPIKeyConnection(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TestAPIKeyConnection'](arg1, arg2, arg3);
+export function TestAPIKeyConnection(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TestAPIKeyConnection'](arg1, arg2, arg3, arg4);
 }
 
 export function TestRunScript(arg1) {

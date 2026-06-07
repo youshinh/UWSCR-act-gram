@@ -110,6 +110,7 @@
 
         try {
             let testURL = '';
+            let testLLMType = '';
             if (selectedProvider === 'custom') {
                 testURL = customBaseURL;
             } else if (selectedProvider === 'local') {
@@ -117,8 +118,9 @@
                 if (!testURL) {
                     testURL = localLLMType === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234';
                 }
+                testLLMType = localLLMType; // UIの現在選択値を渡す
             }
-            const res = await TestAPIKeyConnection(selectedProvider, apiKey, testURL);
+            const res = await TestAPIKeyConnection(selectedProvider, apiKey, testURL, testLLMType);
             showStatus(`${res}`, 'success');
             EventsEmit('llm-key-updated', selectedProvider);
         } catch (e) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -35,12 +36,19 @@ func NewLocalProvider(llmType string, baseURL string, apiKey string) *LocalProvi
 	}
 }
 
-// getHostURL は /v1 や /api/v1 を除いたホストのベースURLを返します。
+// getHostURL はユーザーが入力したURLから scheme+host+port だけを抽出して返します。
+// 例: "http://localhost:1234/api/v1/chat" -> "http://localhost:1234"
 func (p *LocalProvider) getHostURL() string {
 	u := strings.TrimRight(p.baseURL, "/")
-	u = strings.TrimSuffix(u, "/api/v1")
-	u = strings.TrimSuffix(u, "/v1")
-	return u
+	// net/url.Parse でホスト部分だけを取り出す
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		// パースに失敗した場合は文字列ベースのフォールバック
+		u = strings.TrimSuffix(u, "/api/v1")
+		u = strings.TrimSuffix(u, "/v1")
+		return u
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 type ollamaModelsResponse struct {
