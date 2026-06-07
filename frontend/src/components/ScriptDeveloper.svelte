@@ -12,20 +12,46 @@
   let mode = 'batch';
 
   $: if (importedSteps && importedSteps.length > 0) {
-    steps = importedSteps.map((s, idx) => ({
-      id: s.step_number || (idx + 1),
-      title: s.title || `ステップ ${idx + 1}`,
-      prompt: s.instruction || '',
-      code: s.uws_code || '',
-      logs: '',
-      status: 'idle',
-      sessionContext: null,
-      highlightedLine: null
-    }));
+    steps = importedSteps.map((s, idx) => {
+      // 1. まずベースとなるステップオブジェクトを構築
+      const stepObj = {
+        id: s.step_number || (idx + 1),
+        title: s.title || `ステップ ${idx + 1}`,
+        prompt: s.instruction || '',
+        code: s.uws_code || '',
+        logs: '',
+        status: 'idle',
+        sessionContext: null, // 初期値は一旦null
+        highlightedLine: null
+      };
+
+      // 2. image_path が存在する場合、バックエンドからBase64データを取得してセッションコンテキストを復元
+      // Goの s.image_path または s.ImagePath の双方を考慮したフォールバック
+      const imgPath = s.image_path || s.ImagePath;
+      if (imgPath) {
+        App.GetImageBase64(imgPath).then(res => {
+          if (res) {
+            // "data:image/png;base64,..." のヘッダーから純粋なBase64文字列のみを抽出
+            const base64Raw = res.includes(',') ? res.split(',')[1] : res;
+            
+            stepObj.sessionContext = {
+              active_title: stepObj.title,
+              screenshot_base64: base64Raw
+            };
+            steps = [...steps]; // Svelteの画面再描画をトリガー
+          }
+        }).catch(err => {
+          console.error("[ScriptDeveloper] インポート画像の復元に失敗しました:", err);
+        });
+      }
+
+      return stepObj;
+    });
+
     activeStepIndex = 0;
     mode = 'step'; // ステップ開発モードに切り替え
     importedSteps = null; // 処理したらクリア
-    showStatus('マニュアル作成から手順をインポートしました！各ステップを直接編集・検証できます。');
+    showStatus('マニュアル作成から手順をインポートしました！各ステップのキャプチャ画像とコードを直接検証できます。');
   }
 
   // ワンショット開発用状態
