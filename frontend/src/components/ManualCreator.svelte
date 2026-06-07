@@ -112,23 +112,28 @@
     }
   }
 
-  // ステップ実行
-  async function handleExecuteStep() {
+  // ★新設：次のステップへ進むだけの関数
+  async function handleExecuteStepOnly() {
     if (isExecuting) return;
     isExecuting = true;
 
     try {
       const result = await App.ExecuteStep(currentStep);
       if (result) {
-        if (currentStep < steps.length - 1) {
-          currentStep++;
-        }
+        alert("ステップの実行が完了しました。");
       }
     } catch (err) {
       console.error("ステップ実行エラー: ", err);
       alert("実行中にエラーが発生しました: " + (err.message || err));
     } finally {
       isExecuting = false;
+    }
+  }
+
+  // ★新設：次のステップへ進むだけの関数（重複を排除した正しい定義）
+  function handleNextStep() {
+    if (currentStep < steps.length - 1) {
+      currentStep++;
     }
   }
 
@@ -152,7 +157,6 @@
     if (!text) return;
     try {
       window.speechSynthesis.cancel();
-      // 余計な記号などをマイルドに間引き
       const cleanText = text.replace(/[\*\[\]`#\-_]/g, '');
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.lang = 'ja-JP';
@@ -174,58 +178,69 @@
 </script>
 
 <div class="manual-creator-layout">
-  <!-- 1. オート・スライサー制御パネル -->
+<!-- 1. オート・スライサー制御パネル -->
   <div class="control-panel card">
-    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-      <div class="header-main" style="display: flex; align-items: center; gap: 8px;">
-        <svg class="header-icon animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <polygon points="10 8 16 12 10 16 10 8"/>
-        </svg>
-        <div class="header-text">
-          <h2>シナリオ自動生成</h2>
-          <p class="description" style="margin: 0; font-size: 0.8rem; color: var(--text-secondary);">レコーダーが保存した操作ログフォルダを指定すると、記録した操作をステップに分割し、再生用スクリプトを含む対話型ガイドを生成します。</p>
-        </div>
-      </div>
-      {#if steps.length > 0}
-        <button class="gradient-btn" on:click={handleExportToDev} style="display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 20px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
-            <polyline points="16 18 22 12 16 6"/>
-            <polyline points="8 6 2 12 8 18"/>
-          </svg>
-          シナリオを編集
-        </button>
-      {/if}
-    </div>
-
-    <div class="settings-row">
-      <div class="form-group flex-fill">
-        <div class="input-with-btn">
-          <input 
-            type="text" 
-            placeholder="記録ログフォルダパス (C:/data/log...)" 
-            class="path-input"
-            bind:value={selectedLogDir}
-            disabled={isGenerating}
-          />
-          <button class="btn-browse" on:click={browseLogDir} disabled={isGenerating}>
-            参照...
-          </button>
-        </div>
-      </div>
+    <div style="display: flex; gap: 24px; align-items: flex-start;">
       
-      <button 
-        class="btn-generate gradient-btn"
-        on:click={handleAutoGenerate}
-        disabled={isGenerating}
-        style="display: flex; align-items: center; justify-content: center; gap: 8px;"
-      >
-        {#if isGenerating}
-          <span class="spinner-mini"></span> 解析記述中...
+      <!-- 左側：タイトルと入力エリアのメインブロック -->
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 16px;">
+        <div class="header-main" style="display: flex; align-items: center; gap: 12px;">
+          <svg class="header-icon animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="10 8 16 12 10 16 10 8"/>
+          </svg>
+          <div class="header-text">
+            <h2>シナリオ自動生成</h2>
+            <p class="description">レコーダーが保存した操作ログフォルダを指定すると、手順の分割とガイドを生成します。</p>
+          </div>
+        </div>
+
+        <div class="settings-row" style="display: flex; gap: 8px; width: 100%;">
+          <div class="input-with-btn" style="flex: 1; display: flex; gap: 8px;">
+            <input 
+              type="text" 
+              placeholder="記録ログフォルダパス" 
+              class="path-input"
+              bind:value={selectedLogDir}
+              disabled={isGenerating}
+            />
+            <button class="btn-browse" on:click={browseLogDir} disabled={isGenerating}>
+              参照...
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右側：幅を統一したボタン専用カラム -->
+      <div style="display: flex; flex-direction: column; gap: 12px; min-width: 180px;">
+        <!-- シナリオを編集ボタン -->
+        {#if steps.length > 0}
+          <button class="gradient-btn" on:click={handleExportToDev} style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
+            </svg>
+            シナリオを編集
+          </button>
         {:else}
-          記録から自動生成
+          <!-- ボタンがない時も高さを確保してレイアウトを維持 -->
+          <div style="height: 42px;"></div>
         {/if}
-      </button>
+
+        <!-- 記録から自動生成ボタン -->
+        <button 
+          class="btn-generate gradient-btn"
+          on:click={handleAutoGenerate}
+          disabled={isGenerating}
+          style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px;"
+        >
+          {#if isGenerating}
+            <span class="spinner-mini"></span> 解析中...
+          {:else}
+            記録から自動生成
+          {/if}
+        </button>
+      </div>
     </div>
   </div>
 
@@ -295,7 +310,6 @@
           <p>記録ログディレクトリを指定して、上の「記録から自動生成」を実行してください。</p>
         </div>
       {/if}
-
       <!-- 下部同期コントローラー -->
       <div class="sync-controller border-t">
         <button 
@@ -310,21 +324,31 @@
           ステップ進捗: {steps.length > 0 ? currentStep + 1 : 0} / {steps.length}
         </span>
 
-        <button 
-          class="btn-execute"
-          disabled={steps.length === 0 || isExecuting}
-          on:click={handleExecuteStep}
-        >
-          {#if isExecuting}
-            実行中...
-          {:else}
-            このステップを実行して次へ
-          {/if}
-        </button>
+        <div class="execute-nav-group" style="display: flex; gap: 8px;">
+          <button 
+            class="btn-execute"
+            disabled={steps.length === 0 || isExecuting}
+            on:click={handleExecuteStepOnly}
+          >
+            {#if isExecuting}
+              <span class="spinner-mini"></span> 実行中...
+            {:else}
+              ▶ このステップを実行
+            {/if}
+          </button>
+
+          <button 
+            class="btn-nav"
+            disabled={steps.length === 0 || currentStep >= steps.length - 1}
+            on:click={handleNextStep}
+          >
+            次へ
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- 右：業務アシスタント -->
+    <!-- 右：業務アシスタント (ここは既存のまま維持) -->
     <div class="copilot-panel card">
       <div class="copilot-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box;">
         <div style="display: flex; align-items: center; gap: 8px;">
@@ -341,15 +365,12 @@
       </div>
 
       <div class="rag-help-text" style="padding: 10px 16px; background: rgba(128, 128, 128, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.7rem; color: var(--text-secondary); line-height: 1.4;">
-        <b>業務知識の提供方法:</b> 上記の「知識フォルダ」ボタンを押し、開いたフォルダ内に業務マニュアルや仕様書のテキストファイル、画像、PDF、またはOfficeドキュメント（.docx, .xlsx, .pptx）を配置してください。その内容をベースに質問に回答できるようになります。
+        <b>業務知識の提供方法:</b> 上記の「知識フォルダ」ボタンを押し、開いたフォルダ内に業務マニュアルや仕様書のテキストファイル、画像、PDF、またはOfficeドキュメントを配置してください。
       </div>
 
       {#if chatHistory.length > 0}
         <div style="display: flex; justify-content: flex-end; padding: 8px 16px; border-bottom: 1px solid var(--border-color);">
-          <button 
-            on:click={clearChat}
-            style="background: transparent; border: none; color: var(--accent-color); font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;"
-          >
+          <button on:click={clearChat} style="background: transparent; border: none; color: var(--accent-color); font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;">
             🔄 最初の質問選択に戻る
           </button>
         </div>
@@ -383,11 +404,7 @@
           bind:value={userQuestion}
           on:keydown={(e) => e.key === 'Enter' && askAI()}
         />
-        <button 
-          class="btn-chat-send" 
-          on:click={askAI}
-          disabled={!userQuestion.trim()}
-        >
+        <button class="btn-chat-send" on:click={askAI} disabled={!userQuestion.trim()}>
           質問
         </button>
       </div>

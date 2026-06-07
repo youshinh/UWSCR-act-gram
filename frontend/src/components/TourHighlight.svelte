@@ -12,10 +12,12 @@
     const el = document.getElementById(targetId);
     if (el) {
       const rect = el.getBoundingClientRect();
-      const padding = 6;
+      const offsetX = -2;  // 横方向のズレ補正：マイナス値で「左」に移動
+      const offsetY = -2;  // 縦方向のズレ補正：マイナス値で「上」に移動
+      const padding = 4;   // アイコンの周りの見やすさ用の余白（お好みで）
       boxStyle = `
-        left: ${rect.left - padding}px;
-        top: ${rect.top - padding}px;
+        left: ${rect.left - padding + offsetX}px;
+        top: ${rect.top - padding + offsetY}px;
         width: ${rect.width + padding * 2}px;
         height: ${rect.height + padding * 2}px;
       `;

@@ -986,35 +986,34 @@
 <!-- ====== インタラクティブ UI ツアー ====== -->
 {#if showTour}
   {@const step = tourSteps[tourStep]}
-  <!-- スポットライト / 半透明オーバーレイ -->
+  
+  {#if step.highlight}
+    <TourHighlight targetId={step.highlight} />
+  {/if}
+
   <div
     class="tour-overlay"
     on:click|self={closeTour}
     transition:fade={{ duration: 200 }}
   >
-    <!-- ツアーカード -->
     <div
       class="tour-card {step.position === 'center' ? 'tour-card-center' : step.position === 'bottom-left' ? 'tour-card-bottom-left' : 'tour-card-bottom'}"
       on:click|stopPropagation
       transition:fly={{ y: 20, duration: 250 }}
     >
-      <!-- ヘッダー -->
       <div class="tour-card-header">
         <span class="tour-step-badge">{tourStep + 1} / {tourSteps.length}</span>
         <button class="tour-close-btn" on:click={closeTour} aria-label="ガイドを閉じる">✕</button>
       </div>
 
-      <!-- タイトル -->
       <h3 class="tour-card-title">{step.title}</h3>
 
-      <!-- 説明（改行対応） -->
       <div class="tour-card-desc">
         {#each step.desc.split('\n') as line}
           <p>{line}</p>
         {/each}
       </div>
 
-      <!-- ステップドット -->
       <div class="tour-dots">
         {#each tourSteps as _, i}
           <button
@@ -1025,7 +1024,6 @@
         {/each}
       </div>
 
-      <!-- ナビゲーションボタン -->
       <div class="tour-nav">
         <button
           class="tour-btn tour-btn-secondary"
@@ -1034,6 +1032,7 @@
         >
           ← 前へ
         </button>
+        
         <button
           class="tour-btn tour-btn-primary"
           on:click={nextTourStep}
@@ -1042,11 +1041,6 @@
         </button>
       </div>
     </div>
-
-    <!-- ハイライト枠（要素にスポットライト） -->
-    {#if step.highlight}
-      <TourHighlight targetId={step.highlight} />
-    {/if}
   </div>
 {/if}
 
