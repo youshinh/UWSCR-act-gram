@@ -75,16 +75,20 @@ func (p *LocalProvider) GetAvailableModels() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Ollamaサーバーに接続できません: %v", err)
 		}
-		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close() // defer不使用: ループ外でも即時解放
+		if err != nil {
+			return nil, fmt.Errorf("Ollamaレスポンス読み込み失敗: %v", err)
+		}
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
 			return nil, fmt.Errorf("ollama api status %d: %s", resp.StatusCode, string(body))
 		}
 
 		var tagsResp ollamaModelsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
-			return nil, err
+		if err := json.Unmarshal(body, &tagsResp); err != nil {
+			return nil, fmt.Errorf("Ollamaレスポンスパース失敗: %v", err)
 		}
 
 		var models []string
@@ -96,7 +100,7 @@ func (p *LocalProvider) GetAvailableModels() ([]string, error) {
 
 	// LM Studio 又は OpenAI互換ローカルLLM
 	hostURL := p.getHostURL()
-	// 推奨の /api/v1/models と互換の /v1/models を試す
+	// 推奨の /api/v1/models (LM Studio native) と互換の /v1/models (OpenAI互換) を試す
 	endpoints := []string{
 		hostURL + "/api/v1/models",
 		hostURL + "/v1/models",
@@ -118,17 +122,23 @@ func (p *LocalProvider) GetAvailableModels() ([]string, error) {
 			lastErr = fmt.Errorf("LM Studio / ローカルLLM サーバーに接続できません (%s): %v", url, err)
 			continue
 		}
-		defer resp.Body.Close()
+
+		// io.ReadAll で一括読み込み: json.NewDecoder streaming はKeep-Alive接続でブロックする恐れがある
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close() // defer不使用: ループ内では即時Close必須
+		if err != nil {
+			lastErr = fmt.Errorf("レスポンスボディ読み込み失敗 (%s): %v", url, err)
+			continue
+		}
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
 			lastErr = fmt.Errorf("api status %d from %s: %s", resp.StatusCode, url, string(body))
 			continue
 		}
 
 		var modelsResp openAIModelsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
-			lastErr = err
+		if err := json.Unmarshal(body, &modelsResp); err != nil {
+			lastErr = fmt.Errorf("JSONパース失敗 (%s): %v", url, err)
 			continue
 		}
 
@@ -136,7 +146,11 @@ func (p *LocalProvider) GetAvailableModels() ([]string, error) {
 		for _, m := range modelsResp.Data {
 			models = append(models, m.ID)
 		}
-		return models, nil
+		if len(models) > 0 {
+			return models, nil
+		}
+		// modelsが空の場合は次のエンドポイントを試す
+		lastErr = fmt.Errorf("モデルリストが空でした (%s)", url)
 	}
 
 	return nil, fmt.Errorf("モデル一覧の取得に失敗しました: %v", lastErr)

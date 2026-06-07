@@ -315,7 +315,7 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		if err != nil {
 			return "", fmt.Errorf("Gemini API接続テスト失敗: %v", err)
 		}
-		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
+		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), firstModel(models)), nil
 
 	case "anthropic":
 		providerImpl := llm.NewAnthropicProvider(key)
@@ -323,7 +323,7 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		if err != nil {
 			return "", fmt.Errorf("Anthropic API接続テスト失敗: %v", err)
 		}
-		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
+		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), firstModel(models)), nil
 
 	case "openai":
 		providerImpl := llm.NewOpenAIProvider(key, "https://api.openai.com/v1")
@@ -331,7 +331,7 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		if err != nil {
 			return "", fmt.Errorf("OpenAI API接続テスト失敗: %v", err)
 		}
-		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
+		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), firstModel(models)), nil
 
 	case "custom":
 		if customBaseURL == "" {
@@ -349,7 +349,7 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		if err != nil {
 			return "", fmt.Errorf("カスタム接続先 APIテスト失敗: %v", err)
 		}
-		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
+		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), firstModel(models)), nil
 
 	case "local":
 		// UIから渡された localLLMType を優先し、なければ保存済み設定を使用
@@ -386,11 +386,19 @@ func (a *App) TestAPIKeyConnection(provider string, key string, customBaseURL st
 		if err != nil {
 			return "", fmt.Errorf("ローカルLLM (%s) 接続テスト失敗: %v", localLLMType, err)
 		}
-		return fmt.Sprintf("接続成功！利用可能モデル数: %d (先頭モデル: %v)", len(models), models[0]), nil
+		return fmt.Sprintf("接続成功！利用可能モデル数: %d%s", len(models), firstModel(models)), nil
 
 	default:
 		return "", fmt.Errorf("未対応のプロバイダーです: %s", provider)
 	}
+}
+
+// firstModel はモデルリストが空でなければ先頫モデル名を返します。リストが空の場合はpanicを防止するため空文字を返します。
+func firstModel(models []string) string {
+	if len(models) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (先頫モデル: %s)", models[0])
 }
 
 // FetchModels は指定されたプロバイダーの利用可能モデルを動的に取得して返します
