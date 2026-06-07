@@ -333,7 +333,7 @@
             {#if isExecuting}
               <span class="spinner-mini"></span> 実行中...
             {:else}
-              ▶ このステップを実行
+              ▶ このステップを再生
             {/if}
           </button>
 
@@ -399,7 +399,7 @@
       <div class="chat-input-row border-t">
         <input 
           type="text" 
-          placeholder="例: 框の厚みの入力仕様は？" 
+          placeholder="例: 伝票の数量に小数点は使える？" 
           class="chat-input"
           bind:value={userQuestion}
           on:keydown={(e) => e.key === 'Enter' && askAI()}

@@ -742,7 +742,7 @@
 <div class="developer-container">
   <div class="header-section">
     <h1>スクリプト開発</h1>
-    <p class="subtitle">自然言語と現在の画面状況を組み合わせてUWSCRスクリプトを作成・編集・実行します</p>
+    <p class="subtitle">自然言語と画面状況を組み合わせてUWSCRスクリプトを作成・編集・実行します</p>
     
     <div class="mode-tabs">
       <button class="mode-tab-btn {mode === 'batch' ? 'active' : ''}" on:click={() => switchMode('batch')}>ワンショット開発</button>
@@ -758,14 +758,14 @@
         <!-- 画面キャプチャ部分 -->
         <div class="panel-section">
           <div class="section-header">
-            <h3>1. 操作コンテキスト（オプション）</h3>
+            <h3>1. 操作コンテキスト</h3>
             {#if sessionContext}
               <button class="btn-ghost btn-small danger-accent" on:click={clearCapturedContext}>クリア</button>
             {/if}
           </div>
           
           <p class="section-desc">
-            現在操作中の画面キャプチャとウィンドウ名を取得し、生成されるスクリプトの精度を劇的に向上させます。
+            操作中の画面キャプチャとウィンドウ名を取得します。
           </p>
 
           <div 
@@ -797,10 +797,10 @@
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                     <circle cx="12" cy="13" r="4"></circle>
                   </svg>
-                  現在の画面状況をキャプチャ
+                  画面をキャプチャ
                 </button>
                 <button class="btn-outlined w-100" style="border-style: dashed; font-size: 0.8rem;" on:click={() => pasteFromClipboard(false)}>
-                  📋 クリップボードから貼付
+                  📋 クリップボード貼付
                 </button>
               </div>
             {/if}
@@ -837,13 +837,13 @@
       <div class="editor-panel">
         <div class="panel-section h-100 flex-column">
           <div class="section-header">
-            <h3>生成された UWSCR スクリプト (.uws)</h3>
+            <h3>UWSCR スクリプト（直接編集可能）</h3>
           </div>
 
           <div class="editor-container">
             <CodeEditor
               bind:value={generatedCode}
-              placeholder="// 生成されたコードがここに表示されます。直接編集も可能です。"
+              placeholder="// 生成されたコードがここに表示されます。"
               highlightedLine={batchHighlightedLine}
               on:input={() => batchHighlightedLine = null}
             />
@@ -852,19 +852,19 @@
           <!-- ワンショット検証用のテスト実行とデバッグ -->
           <div class="step-test-section" style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 16px; margin-bottom: 16px;">
             <div class="step-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">テスト実行と自動デバッグ</h4>
+              <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">テスト実行・デバッグ</h4>
               <div class="test-btn-group" style="display: flex; gap: 8px;">
                 <button class="btn-outlined btn-small" on:click={handleTestRunBatch} disabled={isBatchTestRunning || !generatedCode} style="font-size: 0.7rem; padding: 4px 8px;">
-                  ▶ テスト実行
+                  ▶ 再生
                 </button>
                 <button class="btn-outlined btn-small danger-accent" on:click={handleStopBatch} disabled={!isBatchTestRunning} style="font-size: 0.7rem; padding: 4px 8px;">
-                  ■ 強制停止
+                  ■ 停止
                 </button>
                 <button class="btn-outlined btn-small" on:click={() => openRefactorModal('batch')} disabled={isLoading || !generatedCode} style="font-size: 0.7rem; padding: 4px 8px;">
-                  🪄 指示して修正
+                  指示して修正
                 </button>
                 <button class="btn-solid btn-small correct-btn" on:click={handleCorrectBatch} disabled={isLoading || batchStatus !== 'error' || !batchLogs} style="font-size: 0.7rem; padding: 4px 8px;">
-                  🪄 エラーを自動修正
+                  エラー自動修正
                 </button>
               </div>
             </div>
@@ -873,7 +873,7 @@
               {#if batchLogs}
                 <pre class="logs-content {batchStatus === 'error' ? 'log-error' : ''}">{batchLogs}</pre>
               {:else}
-                <div class="empty-logs">検証のテスト実行結果（ログおよびタイムスタンプ）がここに表示されます。</div>
+                <div class="empty-logs">テスト実行・デバッグの結果がここに表示されます。</div>
               {/if}
             </div>
           </div>
@@ -1014,12 +1014,12 @@
             <!-- コードエディタ -->
             <div class="step-code-section">
               <div class="step-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">2. UWSCRスクリプト（直接編集して条件分岐を追記可能）</h4>
+                <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">2. UWSCRスクリプト（直接編集可能）</h4>
                 <button class="btn-outlined btn-small" on:click={() => handleSaveStep(activeStepIndex)} disabled={isLoading || !steps[activeStepIndex].code} style="font-size: 0.7rem; padding: 4px 8px;">
                   💾 このステップを保存
                 </button>
               </div>
-              <p class="section-desc">生成されたスクリプトです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
+              <p class="section-desc">生成されたスクリプトです。直接エディタ内で `IFB` などの条件分岐を追記できます。</p>
               
               <div class="editor-container step-editor-container">
                 <CodeEditor
@@ -1037,19 +1037,19 @@
             <!-- 検証とデバッグ -->
             <div class="step-test-section">
               <div class="step-section-title-row">
-                <h4>3. テスト実行と自動デバッグ</h4>
+                <h4>3. テスト実行・デバッグ</h4>
                 <div class="test-btn-group">
                   <button class="btn-outlined btn-small" on:click={handleTestRunStep} disabled={isTestRunning || !currentStep.code}>
-                    ▶ テスト実行
+                    ▶ 再生
                   </button>
                   <button class="btn-outlined btn-small danger-accent" on:click={handleStopStep} disabled={!isTestRunning}>
-                    ■ 強制停止
+                    ■ 停止
                   </button>
                   <button class="btn-outlined btn-small" on:click={() => openRefactorModal('step')} disabled={isLoading || !currentStep.code}>
-                    🪄 指示して修正
+                    指示して修正
                   </button>
                   <button class="btn-solid btn-small correct-btn" on:click={handleCorrectStep} disabled={isLoading || currentStep.status !== 'error' || !currentStep.logs}>
-                    🪄 エラーを自動修正
+                    エラー自動修正
                   </button>
                 </div>
               </div>
@@ -1058,7 +1058,7 @@
                 {#if currentStep.logs}
                   <pre class="logs-content {currentStep.status === 'error' ? 'log-error' : ''}">{currentStep.logs}</pre>
                 {:else}
-                  <div class="empty-logs">検証のテスト実行結果（ログおよびタイムスタンプ）がここに表示されます。</div>
+                  <div class="empty-logs">テスト実行・デバッグの結果がここに表示されます。</div>
                 {/if}
               </div>
             </div>
@@ -1674,8 +1674,9 @@
 
   .step-item-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: center;
+    gap: 12px;
   }
 
   .step-number-badge {

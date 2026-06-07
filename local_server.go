@@ -111,9 +111,8 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 
 	// 6. LLMプロバイダーの初期化
 	var provider llm.LLMProvider
-	// (switch文のロジックはそのまま維持してください)
+	
 	switch layerConfig.Provider {
-	// ... (中略) ...
 	case "local":
 		llmType := cfg.LocalLLMType
 		baseURL := cfg.LocalLLMURL
@@ -122,16 +121,33 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 			if llmType == "ollama" { baseURL = "http://localhost:11434" } else { baseURL = "http://localhost:1234" }
 		}
 		provider = llm.NewLocalProvider(llmType, baseURL, apiKey)
+
+	case "openai":
+		// 引数を2つにする（キーとモデル名、あるいはキーのみかを確認してください）
+		// ここでは仮に (apiKey, layerConfig.Model) として修正します
+		provider = llm.NewOpenAIProvider(apiKey, layerConfig.Model)
+
+	// ClaudeやGeminiが未定義なら、一旦コメントアウトしてエラーを回避します
+	// 実際の llm パッケージに何があるかは llm/ フォルダ内のコードで確認可能です
+	
 	default:
-		// デフォルト処理
+		fmt.Printf("[DEBUG WARN] 対応していないプロバイダーです: %s\n", layerConfig.Provider)
 	}
 
 	// 7. LLM推論の実行
 	fmt.Printf("[DEBUG 8] LM Studioへのリクエストを送信直前です！ URL: %s, Model: %s\n", cfg.LocalLLMURL, layerConfig.Model)
 	
+	if provider == nil {
+		http.Error(w, "LLMプロバイダーが初期化されていません。設定を確認してください。", http.StatusInternalServerError)
+		return
+	}
+
 	resp := provider.GenerateText(req.Prompt, req.ImagePath, layerConfig.Model)
 	
-	fmt.Println("[DEBUG 9] LM Studioからレスポンスが返ってきました！")
+	fmt.Println("[DEBUG 9] LLMからレスポンスが返ってきました！")
+	
+	// resp がポインタか値かで nil チェックが異なる場合がありますが、
+	// エラーチェックが先に来るようにします。
 	if resp.Error != nil {
 		fmt.Printf("[DEBUG ERROR] 推論エラーが発生: %v\n", resp.Error)
 		http.Error(w, fmt.Sprintf("LLM inference error: %v", resp.Error), http.StatusInternalServerError)

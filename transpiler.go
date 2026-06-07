@@ -119,12 +119,21 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 			}
 
 			if imageExpr != "" {
-				// 画像あり (DOSCMD)
+				if strings.TrimSpace(imageExpr) == "GetScreenCapture()" {
+					imageExpr = `"temp_ai_cap.png"`
+				}
+
+				// JSONを文字列として安全に結合し、バックスラッシュを適切にエスケープします
+				// DOSCMD('curl ... -d "{\"prompt\":\"...\"}") のように、JSON内のダブルクォートを \' に変えるか、
+				// 全体を単一引用符で囲む等の工夫がUWSCRでは必要です。
+				
+				// 最終安全策：JSON全体をエスケープして curl に渡す
+				jsonPayload := fmt.Sprintf(`{\"prompt\":\"%s\",\"image_path\":%s}`, escapedPrompt, imageExpr)
+				
 				transpiled := fmt.Sprintf(
-					`DOSCMD('curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H "Content-Type: application/json" -d "{\"prompt\":\"%s\",\"image_path\":\"' + REPLACE(%s, '\\', '\\\\') + '\"}"', true)`,
+					`DOSCMD('curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H "Content-Type: application/json" -d "%s"', true)`,
 					t.port,
-					escapedPrompt,
-					imageExpr,
+					jsonPayload,
 				)
 				result.WriteString(transpiled)
 			} else {
