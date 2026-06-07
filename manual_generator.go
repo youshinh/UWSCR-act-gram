@@ -154,8 +154,46 @@ func GenerateInteractiveScript(steps []ManualStep) (string, error) {
 		llmProvider = llm.NewGeminiProvider(apiKey)
 	case "anthropic":
 		llmProvider = llm.NewAnthropicProvider(apiKey)
+	case "openai":
+		llmProvider = llm.NewOpenAIProvider(apiKey, "https://api.openai.com/v1")
+	case "custom":
+		cfg, _ := LoadConfig()
+		baseURL := ""
+		if cfg != nil {
+			baseURL = cfg.CustomBaseURL
+		}
+		if baseURL == "" {
+			baseURL = "http://localhost:8080/v1"
+		}
+		llmProvider = llm.NewOpenAIProvider(apiKey, baseURL)
+	case "local":
+		llmType := cfg.LocalLLMType
+		baseURL := cfg.LocalLLMURL
+		if llmType == "" {
+			llmType = "ollama"
+		}
+		if baseURL == "" {
+			if llmType == "ollama" {
+				baseURL = "http://localhost:11434"
+			} else {
+				baseURL = "http://localhost:1234"
+			}
+		}
+		llmProvider = llm.NewLocalProvider(llmType, baseURL, apiKey)
 	case "ollama":
-		llmProvider = llm.NewOllamaProvider()
+		llmType := cfg.LocalLLMType
+		baseURL := cfg.LocalLLMURL
+		if llmType == "" {
+			llmType = "ollama"
+		}
+		if baseURL == "" {
+			if llmType == "ollama" {
+				baseURL = "http://localhost:11434"
+			} else {
+				baseURL = "http://localhost:1234"
+			}
+		}
+		llmProvider = llm.NewLocalProvider(llmType, baseURL, apiKey)
 	default:
 		return "", fmt.Errorf("未サポートのプロバイダーです: %s", provider)
 	}
@@ -418,7 +456,7 @@ func buildHTMLContent(steps []ManualStep) string {
         <header>
             <div class="header-left">
                 <h1>操作プロセス指示書</h1>
-                <div class="meta-info">作成元: UWSCR::actgram / 作成日時: %s</div>
+                <div class="meta-info">作成元: actgram::UWSCR / 作成日時: %s</div>
             </div>
             <button class="theme-toggle-btn" onclick="toggleTheme()" aria-label="Toggle dark mode">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>

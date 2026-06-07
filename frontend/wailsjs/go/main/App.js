@@ -58,6 +58,10 @@ export function GetImageBase64(arg1) {
   return window['go']['main']['App']['GetImageBase64'](arg1);
 }
 
+export function GetLocalLLMConfig() {
+  return window['go']['main']['App']['GetLocalLLMConfig']();
+}
+
 export function HasAPIKey(arg1) {
   return window['go']['main']['App']['HasAPIKey'](arg1);
 }
@@ -76,6 +80,10 @@ export function ProposeOptimization(arg1, arg2) {
 
 export function ReadScriptFile(arg1) {
   return window['go']['main']['App']['ReadScriptFile'](arg1);
+}
+
+export function RestoreDefaultReference() {
+  return window['go']['main']['App']['RestoreDefaultReference']();
 }
 
 export function RestoreWindow() {
@@ -102,6 +110,22 @@ export function SaveConfigs(arg1) {
   return window['go']['main']['App']['SaveConfigs'](arg1);
 }
 
+export function SaveCustomBaseURL(arg1) {
+  return window['go']['main']['App']['SaveCustomBaseURL'](arg1);
+}
+
+export function SaveErrorReflection(arg1, arg2) {
+  return window['go']['main']['App']['SaveErrorReflection'](arg1, arg2);
+}
+
+export function SaveKnowledgeDirAndURL(arg1, arg2) {
+  return window['go']['main']['App']['SaveKnowledgeDirAndURL'](arg1, arg2);
+}
+
+export function SaveLocalLLMConfig(arg1, arg2) {
+  return window['go']['main']['App']['SaveLocalLLMConfig'](arg1, arg2);
+}
+
 export function SaveScriptFile(arg1, arg2) {
   return window['go']['main']['App']['SaveScriptFile'](arg1, arg2);
 }
@@ -122,6 +146,10 @@ export function SelectSaveFile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SelectSaveFile'](arg1, arg2, arg3, arg4);
 }
 
+export function SetMiniMode(arg1, arg2) {
+  return window['go']['main']['App']['SetMiniMode'](arg1, arg2);
+}
+
 export function StartRecording() {
   return window['go']['main']['App']['StartRecording']();
 }
@@ -132,6 +160,14 @@ export function StopRecording() {
 
 export function StopScript() {
   return window['go']['main']['App']['StopScript']();
+}
+
+export function SyncUWSCRReference() {
+  return window['go']['main']['App']['SyncUWSCRReference']();
+}
+
+export function TestAPIKeyConnection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestAPIKeyConnection'](arg1, arg2, arg3);
 }
 
 export function TestRunScript(arg1) {

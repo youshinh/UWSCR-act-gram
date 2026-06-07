@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
-    import { GetConfig, SaveConfig, SaveConfigs, FetchModels } from '../../wailsjs/go/main/App';
+    import { GetConfig, SaveConfigs, FetchModels } from '../../wailsjs/go/main/App';
+    import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
     let config = null;
     let isLoading = true;
@@ -17,14 +18,16 @@
     let unifiedSelection = { provider: 'google', model: 'gemini-flash-lite-latest' };
     let isFetchingUnified = false;
 
-    // 各プロバイダーのモデルリストキャッシュ
+    // 各プロバイダー of モデルリストキャッシュ
     let modelCache = {
         google: [],
         anthropic: [],
-        ollama: []
+        openai: [],
+        custom: [],
+        local: []
     };
 
-    // 各レイヤーのモデル取得中フラグ
+    // 各レイヤー of モデル取得中フラグ
     let isFetching = {
         brain: false,
         eye: false,
@@ -32,32 +35,46 @@
     };
 
     onMount(async () => {
+        let cleanup = () => {};
         try {
             config = await GetConfig();
-            if (config && config.layers) {
-                // 既存設定の反映
-                for (const layer of ['brain', 'eye', 'utility']) {
-                    if (config.layers[layer]) {
-                        selections[layer].provider = config.layers[layer].provider;
-                        selections[layer].model = config.layers[layer].model;
+            if (config) {
+                // use_unified_model フラグ of 復元
+                if (config.use_unified_model !== undefined) {
+                    isUnifiedMode = !!config.use_unified_model;
+                } else if (config.layers) {
+                    // 古い設定ファイル of 互換性：全て同じなら一括設定と判定
+                    const layers = config.layers;
+                    if (layers.brain && layers.eye && layers.utility &&
+                        layers.brain.provider === layers.eye.provider && layers.brain.provider === layers.utility.provider &&
+                        layers.brain.model === layers.eye.model && layers.brain.model === layers.utility.model) {
+                        isUnifiedMode = true;
+                    } else {
+                        isUnifiedMode = false;
                     }
                 }
 
-                // 各レイヤーのプロバイダーとモデルがすべて一致している場合は一括設定モード、それ以外は個別設定モード
-                const brain = selections.brain;
-                const eye = selections.eye;
-                const utility = selections.utility;
+                // 既存設定 of 反映
+                if (config.layers) {
+                    for (const layer of ['brain', 'eye', 'utility']) {
+                        if (config.layers[layer]) {
+                            selections[layer].provider = config.layers[layer].provider;
+                            selections[layer].model = config.layers[layer].model;
+                        }
+                    }
+                }
 
-                if (brain.provider === eye.provider && brain.provider === utility.provider &&
-                    brain.model === eye.model && brain.model === utility.model) {
-                    isUnifiedMode = true;
-                    unifiedSelection.provider = brain.provider;
-                    unifiedSelection.model = brain.model;
+                // 一括設定用 of 初期値 of 決定
+                if (isUnifiedMode) {
+                    unifiedSelection.provider = selections.brain.provider;
+                    unifiedSelection.model = selections.brain.model;
                 } else {
-                    isUnifiedMode = false;
+                    unifiedSelection.provider = selections.brain.provider;
+                    unifiedSelection.model = selections.brain.model;
                 }
             }
 
+            // モデル of ロード
             if (isUnifiedMode) {
                 await loadModelsForUnified();
             } else {
@@ -67,11 +84,37 @@
                     loadModelsForLayer('utility')
                 ]);
             }
+
+            // APIキー更新イベント of リスニング登録
+            EventsOn('llm-key-updated', async (provider) => {
+                console.log(`LLM key updated for ${provider}, clearing cache and reloading models...`);
+                modelCache[provider] = [];
+                
+                if (isUnifiedMode) {
+                    if (unifiedSelection.provider === provider) {
+                        await loadModelsForUnified();
+                    }
+                } else {
+                    for (const layer of ['brain', 'eye', 'utility']) {
+                        if (selections[layer].provider === provider) {
+                            await loadModelsForLayer(layer);
+                        }
+                    }
+                }
+            });
+
+            cleanup = () => {
+                EventsOff('llm-key-updated');
+            };
         } catch (e) {
             console.error('Failed to init LayerConfig', e);
         } finally {
             isLoading = false;
         }
+
+        return () => {
+            cleanup();
+        };
     });
 
     let statusMessage = '';
@@ -86,11 +129,7 @@
             if (!modelCache[provider] || modelCache[provider].length === 0) {
                 modelCache[provider] = await FetchModels(provider);
             }
-
-            const models = modelCache[provider];
-            if (models.length > 0 && !models.includes(selections[layer].model)) {
-                selections[layer].model = models[0];
-            }
+            // 不要な自動リセット（models[0]への上書き）を削除し、保存済みの設定値を保護します
         } catch (e) {
             console.error(`Failed to load models for ${layer}`, e);
         } finally {
@@ -113,11 +152,7 @@
             if (!modelCache[provider] || modelCache[provider].length === 0) {
                 modelCache[provider] = await FetchModels(provider);
             }
-
-            const models = modelCache[provider];
-            if (models.length > 0 && !models.includes(unifiedSelection.model)) {
-                unifiedSelection.model = models[0];
-            }
+            // 不要な自動リセット（models[0]への上書き）を削除し、保存済みの設定値を保護します
         } catch (e) {
             console.error(`Failed to load models for unified`, e);
         } finally {
@@ -130,7 +165,7 @@
         await loadModelsForUnified();
     }
 
-    async function applyConfig() {
+    export async function applyConfig() {
         isSaving = true;
         statusMessage = '';
         try {
@@ -145,19 +180,22 @@
                 eye: selections.eye,
                 utility: selections.utility
             };
-            await SaveConfigs(JSON.stringify(layers));
-            statusMessage = '設定を保存・適用しました！';
-            setTimeout(() => { statusMessage = ''; }, 3000);
+            
+            // 新形式のパラメータ（use_unified_modelフラグを同梱）でGoに送信
+            const payload = {
+                use_unified_model: isUnifiedMode,
+                layers: layers
+            };
+            await SaveConfigs(JSON.stringify(payload));
         } catch (e) {
             console.error(`Failed to save configurations`, e);
-            statusMessage = '設定の保存に失敗しました: ' + (e.message || e);
+            throw e;
         } finally {
             isSaving = false;
         }
     }
 
-    async function toggleMode(unified) {
-        isUnifiedMode = unified;
+    async function handleModeChange() {
         if (isUnifiedMode) {
             unifiedSelection.provider = selections.brain.provider;
             unifiedSelection.model = selections.brain.model;
@@ -170,6 +208,16 @@
             ]);
         }
     }
+
+    // 一括設定が有効な時、リアクティブに個別設定へ値を同期 (初期ロード完了後のみ実行)
+    $: if (isUnifiedMode && !isLoading) {
+        selections.brain.provider = unifiedSelection.provider;
+        selections.brain.model = unifiedSelection.model;
+        selections.eye.provider = unifiedSelection.provider;
+        selections.eye.model = unifiedSelection.model;
+        selections.utility.provider = unifiedSelection.provider;
+        selections.utility.model = unifiedSelection.model;
+    }
 </script>
 
 {#if isLoading}
@@ -178,61 +226,67 @@
         <p>レイヤー設定を読み込み中...</p>
     </div>
 {:else}
-    <div class="setting-controls">
-        <div class="mode-selector">
-            <button class="mode-btn" class:active={!isUnifiedMode} on:click={() => toggleMode(false)}>
-                個別設定
-            </button>
-            <button class="mode-btn" class:active={isUnifiedMode} on:click={() => toggleMode(true)}>
-                一括設定
-            </button>
-        </div>
+    <!-- 一括設定のチェックボックス -->
+    <div class="mode-selection-bar">
+        <label class="checkbox-container">
+            <input type="checkbox" bind:checked={isUnifiedMode} on:change={handleModeChange} />
+            <span class="checkmark"></span>
+            すべてのレイヤーに同じモデルを適用する (一括設定)
+        </label>
     </div>
 
-    {#if isUnifiedMode}
-        <div class="unified-container">
-            <div class="card unified-card">
-                <div class="card-header">
-                    <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                    </svg>
-                    <div>
-                        <h3>全レイヤー共通設定</h3>
-                        <span class="badge">すべてのレイヤーに同じモデルを適用</span>
-                    </div>
+    <div class="config-sections">
+        <!-- 1. 全レイヤー共通設定 (一括設定がONのときのみアクティブ) -->
+        <div class="card unified-card" class:disabled={!isUnifiedMode}>
+            <div class="card-header">
+                <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+                <h3>全レイヤー共通設定</h3>
+            </div>
+            
+            <div class="form-row">
+                <div class="control-group">
+                    <label for="unified-provider">共通プロバイダー</label>
+                    <select id="unified-provider" bind:value={unifiedSelection.provider} on:change={handleUnifiedProviderChange} disabled={!isUnifiedMode}>
+                        <option value="google">Google (Gemini)</option>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="openai">OpenAI (ChatGPT)</option>
+                        <option value="custom">カスタム互換サーバー</option>
+                        <option value="local">ローカルLLM (Ollama/LM Studio)</option>
+                    </select>
                 </div>
-                <p class="description">Brain（計画）、Eye（画像解析）、Utility（データ処理）のすべてのレイヤーに同一のモデルを一括して適用します。</p>
-                
-                <div class="form-body">
-                    <div class="control-group">
-                        <label for="unified-provider">共通プロバイダー</label>
-                        <select id="unified-provider" bind:value={unifiedSelection.provider} on:change={handleUnifiedProviderChange}>
-                            <option value="google">Google (Gemini)</option>
-                            <option value="anthropic">Anthropic (Claude)</option>
-                            <option value="ollama">Ollama (ローカルLLM)</option>
-                        </select>
-                    </div>
 
-                    <div class="control-group">
-                        <label for="unified-model">共通AIモデル</label>
-                        {#if isFetchingUnified}
-                            <div class="select-loading">モデル取得中...</div>
-                        {:else}
-                            <select id="unified-model" bind:value={unifiedSelection.model}>
-                                {#each modelCache[unifiedSelection.provider] || [] as m}
-                                    <option value={m}>{m}</option>
-                                {/each}
-                            </select>
-                        {/if}
-                    </div>
+                <div class="control-group">
+                    <label for="unified-model">共通AIモデル</label>
+                    {#if isFetchingUnified || !modelCache[unifiedSelection.provider] || modelCache[unifiedSelection.provider].length === 0}
+                        <div class="select-loading">取得中...</div>
+                    {:else}
+                        <select id="unified-model" bind:value={unifiedSelection.model} disabled={!isUnifiedMode}>
+                            {#each modelCache[unifiedSelection.provider] as m}
+                                <option value={m}>{m}</option>
+                            {/each}
+                            {#if unifiedSelection.model && !modelCache[unifiedSelection.provider].includes(unifiedSelection.model)}
+                                <option value={unifiedSelection.model}>{unifiedSelection.model}</option>
+                            {/if}
+                        </select>
+                    {/if}
                 </div>
             </div>
         </div>
-    {:else}
-        <div class="layers-grid">
+
+        <div class="section-title" class:dimmed={isUnifiedMode}>
+            <h4>個別設定</h4>
+            {#if isUnifiedMode}
+                <span class="status-hint">一括設定が有効なため、以下は読み取り専用になっています。</span>
+            {/if}
+        </div>
+
+        <!-- 2. 個別設定の各レイヤー (一括設定がOFFのときのみアクティブ) -->
+        <div class="layers-grid" class:disabled={isUnifiedMode}>
             <!-- Brain層 Card -->
-            <div class="card layer-card brain-card">
+            <div class="card layer-card brain-card" class:disabled-item={isUnifiedMode}>
                 <div class="card-header">
                     <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
@@ -242,27 +296,31 @@
                         <span class="badge">賢さと安定性優先</span>
                     </div>
                 </div>
-                <p class="description">UWSCRコードの組み立て、実行計画の作成などを司るコアモジュール。</p>
                 
-                <div class="form-body">
+                <div class="form-row">
                     <div class="control-group">
                         <label for="brain-provider">プロバイダー</label>
-                        <select id="brain-provider" bind:value={selections.brain.provider} on:change={() => handleProviderChange('brain')}>
+                        <select id="brain-provider" bind:value={selections.brain.provider} on:change={() => handleProviderChange('brain')} disabled={isUnifiedMode}>
                             <option value="google">Google (Gemini)</option>
                             <option value="anthropic">Anthropic (Claude)</option>
-                            <option value="ollama">Ollama (ローカルLLM)</option>
+                            <option value="openai">OpenAI (ChatGPT)</option>
+                            <option value="custom">カスタム互換サーバー</option>
+                            <option value="local">ローカルLLM (Ollama/LM Studio)</option>
                         </select>
                     </div>
 
                     <div class="control-group">
                         <label for="brain-model">AIモデル</label>
-                        {#if isFetching.brain}
-                            <div class="select-loading">モデル取得中...</div>
+                        {#if isFetching.brain || !modelCache[selections.brain.provider] || modelCache[selections.brain.provider].length === 0}
+                            <div class="select-loading">取得中...</div>
                         {:else}
-                            <select id="brain-model" bind:value={selections.brain.model}>
-                                {#each modelCache[selections.brain.provider] || [] as m}
+                            <select id="brain-model" bind:value={selections.brain.model} disabled={isUnifiedMode}>
+                                {#each modelCache[selections.brain.provider] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
+                                {#if selections.brain.model && !modelCache[selections.brain.provider].includes(selections.brain.model)}
+                                    <option value={selections.brain.model}>{selections.brain.model}</option>
+                                {/if}
                             </select>
                         {/if}
                     </div>
@@ -270,7 +328,7 @@
             </div>
 
             <!-- Eye層 Card -->
-            <div class="card layer-card eye-card">
+            <div class="card layer-card eye-card" class:disabled-item={isUnifiedMode}>
                 <div class="card-header">
                     <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -281,27 +339,31 @@
                         <span class="badge">視覚能力優先</span>
                     </div>
                 </div>
-                <p class="description">デスクトップ画面をキャプチャし、UI要素の位置や画像内の情報を解析するモジュール。</p>
                 
-                <div class="form-body">
+                <div class="form-row">
                     <div class="control-group">
                         <label for="eye-provider">プロバイダー</label>
-                        <select id="eye-provider" bind:value={selections.eye.provider} on:change={() => handleProviderChange('eye')}>
+                        <select id="eye-provider" bind:value={selections.eye.provider} on:change={() => handleProviderChange('eye')} disabled={isUnifiedMode}>
                             <option value="google">Google (Gemini)</option>
                             <option value="anthropic">Anthropic (Claude)</option>
-                            <option value="ollama">Ollama (ローカルLLM)</option>
+                            <option value="openai">OpenAI (ChatGPT)</option>
+                            <option value="custom">カスタム互換サーバー</option>
+                            <option value="local">ローカルLLM (Ollama/LM Studio)</option>
                         </select>
                     </div>
 
                     <div class="control-group">
                         <label for="eye-model">AIモデル</label>
-                        {#if isFetching.eye}
-                            <div class="select-loading">モデル取得中...</div>
+                        {#if isFetching.eye || !modelCache[selections.eye.provider] || modelCache[selections.eye.provider].length === 0}
+                            <div class="select-loading">取得中...</div>
                         {:else}
-                            <select id="eye-model" bind:value={selections.eye.model}>
-                                {#each modelCache[selections.eye.provider] || [] as m}
+                            <select id="eye-model" bind:value={selections.eye.model} disabled={isUnifiedMode}>
+                                {#each modelCache[selections.eye.provider] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
+                                {#if selections.eye.model && !modelCache[selections.eye.provider].includes(selections.eye.model)}
+                                    <option value={selections.eye.model}>{selections.eye.model}</option>
+                                {/if}
                             </select>
                         {/if}
                     </div>
@@ -309,7 +371,7 @@
             </div>
 
             <!-- Hand/Utility層 Card -->
-            <div class="card layer-card utility-card">
+            <div class="card layer-card utility-card" class:disabled-item={isUnifiedMode}>
                 <div class="card-header">
                     <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="3"/>
@@ -320,100 +382,156 @@
                         <span class="badge">速度とコスト優先</span>
                     </div>
                 </div>
-                <p class="description">文字列の置換、正規表現の生成、データ形式の高速な変換を担うモジュール。</p>
                 
-                <div class="form-body">
+                <div class="form-row">
                     <div class="control-group">
                         <label for="utility-provider">プロバイダー</label>
-                        <select id="utility-provider" bind:value={selections.utility.provider} on:change={() => handleProviderChange('utility')}>
+                        <select id="utility-provider" bind:value={selections.utility.provider} on:change={() => handleProviderChange('utility')} disabled={isUnifiedMode}>
                             <option value="google">Google (Gemini)</option>
                             <option value="anthropic">Anthropic (Claude)</option>
-                            <option value="ollama">Ollama (ローカルLLM)</option>
+                            <option value="openai">OpenAI (ChatGPT)</option>
+                            <option value="custom">カスタム互換サーバー</option>
+                            <option value="local">ローカルLLM (Ollama/LM Studio)</option>
                         </select>
                     </div>
 
                     <div class="control-group">
                         <label for="utility-model">AIモデル</label>
-                        {#if isFetching.utility}
-                            <div class="select-loading">モデル取得中...</div>
+                        {#if isFetching.utility || !modelCache[selections.utility.provider] || modelCache[selections.utility.provider].length === 0}
+                            <div class="select-loading">取得中...</div>
                         {:else}
-                            <select id="utility-model" bind:value={selections.utility.model}>
-                                {#each modelCache[selections.utility.provider] || [] as m}
+                            <select id="utility-model" bind:value={selections.utility.model} disabled={isUnifiedMode}>
+                                {#each modelCache[selections.utility.provider] as m}
                                     <option value={m}>{m}</option>
                                 {/each}
+                                {#if selections.utility.model && !modelCache[selections.utility.provider].includes(selections.utility.model)}
+                                    <option value={selections.utility.model}>{selections.utility.model}</option>
+                                {/if}
                             </select>
                         {/if}
                     </div>
                 </div>
             </div>
         </div>
-        
-        <div class="apply-action-bar" style="margin-top: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; border-top: 1px solid var(--border-color); padding-top: 20px; width: 100%;">
-            {#if statusMessage}
-                <span class="status-msg" style="font-size: 0.8rem; color: var(--accent-color); font-weight: 500;">{statusMessage}</span>
-            {/if}
-            <button class="btn-solid" on:click={applyConfig} disabled={isSaving} style="background: var(--accent-color); color: var(--bg-primary); border: 1px solid var(--accent-color); font-weight: 600; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
-                {#if isSaving}
-                    <span class="spinner-mini"></span> 保存中...
-                {:else}
-                    設定を保存・適用
-                {/if}
-            </button>
-        </div>
-    {/if}
+    </div>
 {/if}
 
 <style>
-    .setting-controls {
+    .mode-selection-bar {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 14px 20px;
         margin-bottom: 24px;
     }
 
-    .mode-selector {
+    .checkbox-container {
         display: flex;
-        background: rgba(0, 0, 0, 0.05);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 3px;
-        gap: 4px;
-    }
-
-    :global(html.light-mode) .mode-selector {
-        background: rgba(0, 0, 0, 0.02);
-    }
-
-    .mode-btn {
-        background: transparent;
-        border: none;
-        color: var(--text-secondary);
-        padding: 6px 14px;
-        border-radius: 6px;
-        font-size: 0.8rem;
-        font-weight: 500;
+        align-items: center;
+        position: relative;
+        padding-left: 28px;
         cursor: pointer;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: var(--text-primary);
+        user-select: none;
     }
 
-    .mode-btn:hover {
+    .checkbox-container input {
+        position: absolute;
+        opacity: 0;
+        cursor: pointer;
+        height: 0;
+        width: 0;
+    }
+
+    .checkmark {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        transform: translateY(-50%);
+        height: 16px;
+        width: 16px;
+        background-color: var(--input-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        transition: all 0.2s ease;
+    }
+
+    .checkbox-container:hover input ~ .checkmark {
+        border-color: var(--border-hover);
+    }
+
+    .checkbox-container input:checked ~ .checkmark {
+        background-color: var(--accent-color);
+        border-color: var(--accent-color);
+    }
+
+    .checkmark:after {
+        content: "";
+        position: absolute;
+        display: none;
+    }
+
+    .checkbox-container input:checked ~ .checkmark:after {
+        display: block;
+    }
+
+    .checkbox-container .checkmark:after {
+        left: 5px;
+        top: 2px;
+        width: 4px;
+        height: 8px;
+        border: solid var(--bg-primary);
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+    }
+
+    :global(html.light-mode) .checkbox-container input:checked ~ .checkmark:after {
+        border-color: var(--bg-secondary);
+    }
+
+    .config-sections {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 10px;
+        margin-bottom: 0px;
+        padding: 0 4px;
+    }
+
+    .section-title h4 {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 600;
         color: var(--text-primary);
     }
 
-    .mode-btn.active {
-        color: var(--bg-primary);
-        background: var(--accent-color);
-        font-weight: 600;
-        box-shadow: var(--shadow-sm);
+    .section-title.dimmed h4 {
+        color: var(--text-secondary);
     }
 
-    .unified-container {
-        display: flex;
-        justify-content: center;
-        width: 100%;
+    .status-hint {
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        background: rgba(255, 255, 255, 0.04);
+        padding: 2px 10px;
+        border-radius: 4px;
+    }
+
+    :global(html.light-mode) .status-hint {
+        background: rgba(0, 0, 0, 0.03);
     }
 
     .unified-card {
-        max-width: 500px;
         width: 100%;
     }
 
@@ -421,6 +539,12 @@
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
         gap: 24px;
+        transition: opacity 0.25s ease;
+    }
+
+    .layers-grid.disabled {
+        opacity: 0.5;
+        pointer-events: none;
     }
 
     .layer-card, .unified-card {
@@ -428,38 +552,42 @@
         backdrop-filter: var(--glass-blur);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 28px;
+        padding: 20px;
         box-shadow: var(--shadow-md);
         display: flex;
         flex-direction: column;
-        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease;
+        gap: 16px;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .layer-card:hover, .unified-card:hover {
+    .layer-card:hover:not(.disabled-item), .unified-card:hover:not(.disabled) {
         border-color: var(--border-hover);
         transform: translateY(-2px);
     }
 
+    .card.disabled {
+        opacity: 0.5;
+        pointer-events: none;
+    }
+
     .card-header {
         display: flex;
-        align-items: flex-start;
-        gap: 16px;
-        margin-bottom: 16px;
+        align-items: center;
+        gap: 12px;
         border-bottom: 1px solid var(--border-color);
-        padding-bottom: 16px;
+        padding-bottom: 12px;
     }
 
     .header-icon {
-        width: 24px;
-        height: 24px;
+        width: 20px;
+        height: 20px;
         color: var(--accent-color);
         flex-shrink: 0;
-        margin-top: 2px;
     }
 
     .card-header h3 {
         margin: 0;
-        font-size: 1.05rem;
+        font-size: 0.95rem;
         font-weight: 600;
         color: var(--text-primary);
     }
@@ -473,32 +601,26 @@
         border-radius: 20px;
         font-weight: 500;
         display: inline-block;
-        margin-top: 6px;
+        margin-left: 6px;
     }
 
-    .description {
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        line-height: 1.5;
-        margin-bottom: 24px;
-        margin-top: 0;
-        flex-grow: 1;
-    }
-
-    .form-body {
+    /* Form rows for 2-column select inputs */
+    .form-row {
         display: flex;
-        flex-direction: column;
         gap: 16px;
+        width: 100%;
     }
 
     .control-group {
         display: flex;
         flex-direction: column;
         gap: 6px;
+        flex: 1;
+        min-width: 0;
     }
 
     label {
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         color: var(--text-secondary);
         font-weight: 500;
     }
@@ -519,6 +641,13 @@
         outline: none;
         border-color: var(--accent-color);
         box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    select:disabled {
+        background-color: var(--border-color);
+        opacity: 0.8;
+        color: var(--text-secondary);
+        cursor: not-allowed;
     }
 
     .select-loading {

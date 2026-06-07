@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -103,6 +104,8 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		return fmt.Errorf("一時スクリプトの作成に失敗しました: %v", err)
 	}
 
+	isGuide := strings.Contains(scriptPath, "interactive_guide.uws")
+
 	// 5. 非同期実行 (Goroutine)
 	go func() {
 		defer os.Remove(tempPath) // 終了後に一時ファイルを削除
@@ -136,6 +139,9 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		}
 
 		o.emitLog(fmt.Sprintf("[System] 起動成功 (PID: %d)", cmd.Process.Pid), false)
+		if !isGuide {
+			o.app.SetMiniMode(true, "play") // ミニモードに切り替え
+		}
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -167,6 +173,10 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 			o.activeCmd = nil
 		}
 		o.mu.Unlock()
+
+		if !isGuide {
+			o.app.SetMiniMode(false, "play") // ウィンドウを通常サイズに復元
+		}
 
 		if err != nil {
 			o.emitLog(fmt.Sprintf("[System] プロセスがエラーで終了しました: %v", err), true)
@@ -283,7 +293,19 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 		}
 		writeLog(fmt.Sprintf("[System] テスト実行がエラーで終了しました: %v", err), true)
 	} else {
-		writeLog("[System] テスト実行が正常に終了しました。", false)
+		// UWSCRは構文エラー時にも0を返すことがあるため、ログ文言による強制失敗チェック
+		logStr := logBuf.String()
+		if strings.Contains(logStr, "構文エラー") || strings.Contains(logStr, "ありません") || strings.Contains(logStr, "Error:") || strings.Contains(logStr, "エラー") {
+			success = false
+			writeLog("[System] 警告: ログ内に構文エラーまたは未定義定数を検出したため、テスト失敗と判定します。", true)
+		} else {
+			writeLog("[System] テスト実行が正常に終了しました。", false)
+		}
+	}
+
+	// テスト失敗時は自己学習用反射ファイルにエラー内容を記録
+	if !success {
+		_ = o.app.SaveErrorReflection(string(scriptContent), logBuf.String())
 	}
 
 	return logBuf.String(), success, nil

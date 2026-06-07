@@ -16,6 +16,19 @@ func NewTranspiler(port int) *Transpiler {
 
 // Transpile はスクリプトテキストを受け取り、AI_EVALマクロを置換して返します。
 func (t *Transpiler) Transpile(script string) (string, error) {
+	// AIが間違って出力しがちな STATUS 定数を正しい UWSCR 定数に自動補正
+	script = strings.ReplaceAll(script, "STATUS_X", "ST_X")
+	script = strings.ReplaceAll(script, "STATUS_Y", "ST_Y")
+	script = strings.ReplaceAll(script, "STATUS_WIDTH", "ST_WIDTH")
+	script = strings.ReplaceAll(script, "STATUS_HEIGHT", "ST_HEIGHT")
+	script = strings.ReplaceAll(script, "STATUS_TITLE", "ST_TITLE")
+	script = strings.ReplaceAll(script, "STATUS_CLASS", "ST_CLASS")
+
+	// UWSCの CTRL_WIN は UWSCR では ctrlwin (アンダースコアなし) となるため自動補正
+	script = strings.ReplaceAll(script, "CTRL_WIN", "CTRLWIN")
+	script = strings.ReplaceAll(script, "ctrl_win", "ctrlwin")
+	script = strings.ReplaceAll(script, "Ctrl_Win", "ctrlwin")
+
 	script = replaceNewlinesInStrings(script)
 	var result strings.Builder
 	currentIndex := 0
@@ -97,7 +110,9 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 				prompt = prompt[1 : len(prompt)-1]
 			}
 
-			escapedPrompt := strings.ReplaceAll(prompt, `"`, `\"`)
+			escapedPrompt := strings.ReplaceAll(prompt, `\`, `\\`)
+			escapedPrompt = strings.ReplaceAll(escapedPrompt, `"`, `\"`)
+			escapedPrompt = strings.ReplaceAll(escapedPrompt, `'`, `\'`)
 			imageExpr := ""
 			if len(args) > 1 {
 				imageExpr = args[1]
@@ -105,9 +120,8 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 
 			if imageExpr != "" {
 				// 画像あり (DOSCMD)
-				// Windows cmd.exeのパース仕様に合わせ、\" でエスケープしたダブルクォーテーションでJSONを囲む
 				transpiled := fmt.Sprintf(
-					`DOSCMD("curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H ""Content-Type: application/json"" -d ""{\""prompt\"":\""%s\"",\""image_path\"":\""\"" + REPLACE(%s, ""\"", ""\\"" ) + ""\""}""", true)`,
+					`DOSCMD('curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H "Content-Type: application/json" -d "{\"prompt\":\"%s\",\"image_path\":\"' + REPLACE(%s, '\\', '\\\\') + '\"}"', true)`,
 					t.port,
 					escapedPrompt,
 					imageExpr,
@@ -116,7 +130,7 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 			} else {
 				// 画像なし (DOSCMD)
 				transpiled := fmt.Sprintf(
-					`DOSCMD("curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H ""Content-Type: application/json"" -d ""{\""prompt\"":\""%s\""}""", true)`,
+					`DOSCMD('curl.exe -s -X POST http://127.0.0.1:%d/ai_eval -H "Content-Type: application/json" -d "{\"prompt\":\"%s\"}"', true)`,
 					t.port,
 					escapedPrompt,
 				)

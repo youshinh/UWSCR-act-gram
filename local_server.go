@@ -111,8 +111,43 @@ func (s *LocalServer) handleAIEval(w http.ResponseWriter, r *http.Request) {
 		provider = llm.NewGeminiProvider(apiKey)
 	case "anthropic":
 		provider = llm.NewAnthropicProvider(apiKey)
+	case "openai":
+		provider = llm.NewOpenAIProvider(apiKey, "https://api.openai.com/v1")
+	case "custom":
+		baseURL := cfg.CustomBaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080/v1"
+		}
+		provider = llm.NewOpenAIProvider(apiKey, baseURL)
+	case "local":
+		llmType := cfg.LocalLLMType
+		baseURL := cfg.LocalLLMURL
+		if llmType == "" {
+			llmType = "ollama"
+		}
+		if baseURL == "" {
+			if llmType == "ollama" {
+				baseURL = "http://localhost:11434"
+			} else {
+				baseURL = "http://localhost:1234"
+			}
+		}
+		provider = llm.NewLocalProvider(llmType, baseURL, apiKey)
 	case "ollama":
-		provider = llm.NewOllamaProvider()
+		// 後方互換フォールバック
+		llmType := cfg.LocalLLMType
+		baseURL := cfg.LocalLLMURL
+		if llmType == "" {
+			llmType = "ollama"
+		}
+		if baseURL == "" {
+			if llmType == "ollama" {
+				baseURL = "http://localhost:11434"
+			} else {
+				baseURL = "http://localhost:1234"
+			}
+		}
+		provider = llm.NewLocalProvider(llmType, baseURL, apiKey)
 	default:
 		http.Error(w, fmt.Sprintf("Unsupported provider: %s", layerConfig.Provider), http.StatusBadRequest)
 		return

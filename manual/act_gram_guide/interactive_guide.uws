@@ -1,24 +1,8 @@
-CONST TIMEOUT = 30000
-CONST BTN_YESNO = 4
-CONST IDYES = 6
-
-// GETTIME_MSの代替としてGETTIME関数を使用し、精度を確保
-DIM startTime = GETTIME()
-DIM step = 1
-
-PRINT "[System] モニタリング開始"
-
-WHILE (GETTIME() - startTime) * 1000 < TIMEOUT
-    // 条件評価を先行させ、スレッドをブロックしないための工夫
-    // MSGBOXはモーダルであるため、判定をインライン化して評価を最適化
-    IFB MSGBOX("【ステップ" + step + "】", BTN_YESNO) = IDYES THEN
-        step = step + 1
-        IF step > 3 THEN
-            PRINT "[System] プロセス完了"
-            BREAK
-        ENDIF
-    ELSE
-        // CPU負荷を考慮しつつ応答性を維持する最小限の待機
-        SLEEP(0.001)
-    ENDIF
-WEND
+// actgram::UWSCR インタラクティブガイド
+MSGBOX("actgram::UWSCR デモガイドへようこそ！")
+MSGBOX("これからactgramの主要な機能である『PLAY（実行）』『REC（操作記録）』『DEVELOP（スクリプト開発）』『MANUAL（マニュアル作成）』を説明します。")
+MSGBOX("1. 【PLAY】タブ\nUWSCRスクリプトを実行し、実測ログからボトルネック（無駄なSLEEP）を検知して最適化できます。")
+MSGBOX("2. 【REC】タブ\nデスクトップでの操作を記録して、マニュアル生成用ログを保存できます。")
+MSGBOX("3. 【DEVELOP】タブ\n画面キャプチャと指示を元にAIが自動生成したスクリプトをテスト実行し、自己修復できます。")
+MSGBOX("4. 【MANUAL】タブ\n記録したログから対話型HTMLマニュアルとUWSCRガイドをAIでワンクリック生成できます。")
+MSGBOX("ガイドは以上です。ぜひ各機能をお試しください！")

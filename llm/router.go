@@ -54,6 +54,8 @@ func readImageAsBase64(imagePath string) (string, string, error) {
 		mimeType = "image/gif"
 	case ".webp":
 		mimeType = "image/webp"
+	case ".pdf":
+		mimeType = "application/pdf"
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(data)

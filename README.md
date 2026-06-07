@@ -1,4 +1,4 @@
-# UWSCR::actgram
+# actgram::UWSCR
 
 **RPA Sidecar for UWSCR** — UWSCR スクリプトへの支援とスクリプト生成機能を追加する、軽量なサイドカーエージェントです。
 

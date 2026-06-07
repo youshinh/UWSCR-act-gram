@@ -17,7 +17,13 @@ export namespace main {
 	export class Config {
 	    Port: number;
 	    UWSCRPath: string;
+	    KnowledgeDir: string;
+	    UWSCRDocURL: string;
+	    CustomBaseURL: string;
+	    LocalLLMType: string;
+	    LocalLLMURL: string;
 	    Layers: Record<string, LayerConfig>;
+	    UseUnifiedModel: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -27,7 +33,13 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Port = source["Port"];
 	        this.UWSCRPath = source["UWSCRPath"];
+	        this.KnowledgeDir = source["KnowledgeDir"];
+	        this.UWSCRDocURL = source["UWSCRDocURL"];
+	        this.CustomBaseURL = source["CustomBaseURL"];
+	        this.LocalLLMType = source["LocalLLMType"];
+	        this.LocalLLMURL = source["LocalLLMURL"];
 	        this.Layers = this.convertValues(source["Layers"], LayerConfig, true);
+	        this.UseUnifiedModel = source["UseUnifiedModel"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -49,6 +61,20 @@ export namespace main {
 		}
 	}
 	
+	export class LocalLLMConfig {
+	    type: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalLLMConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.url = source["url"];
+	    }
+	}
 	export class SessionContext {
 	    active_title: string;
 	    screenshot_path: string;

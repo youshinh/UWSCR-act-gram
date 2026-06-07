@@ -1,36 +1,72 @@
 <script>
     import { onMount } from 'svelte';
-    import { SaveAPIKey, HasAPIKey } from '../../wailsjs/go/main/App';
+    import { SaveAPIKey, HasAPIKey, GetConfig, SaveCustomBaseURL, TestAPIKeyConnection, GetLocalLLMConfig, SaveLocalLLMConfig } from '../../wailsjs/go/main/App';
+    import { EventsEmit } from '../../wailsjs/runtime/runtime';
 
     let selectedProvider = 'google';
     let apiKey = '';
+    let customBaseURL = '';
+    let localLLMType = 'ollama';
+    let localLLMURL = '';
     let isSaving = false;
+    let isTesting = false;
     let statusMessage = '';
-    let statusType = ''; // 'success' | 'error'
+    let statusType = ''; // 'success' | 'error' | 'testing'
 
     // 各プロバイダーのAPIキー登録状態
     let keyStatus = {
         google: false,
         anthropic: false,
-        openai: false // Ollamaはキー不要のため除外
+        openai: false,
+        custom: false,
+        local: false
     };
 
     onMount(async () => {
         await checkKeyStatus();
+        await loadConfig();
+        await loadLocalConfig();
     });
+
+    async function loadConfig() {
+        try {
+            const config = await GetConfig();
+            if (config && config.CustomBaseURL) {
+                customBaseURL = config.CustomBaseURL;
+            } else {
+                customBaseURL = 'http://localhost:8080/v1';
+            }
+        } catch (e) {
+            console.error('Failed to load config for CredentialInput', e);
+        }
+    }
+
+    async function loadLocalConfig() {
+        try {
+            const localConfig = await GetLocalLLMConfig();
+            if (localConfig) {
+                localLLMType = localConfig.type || 'ollama';
+                localLLMURL = localConfig.url || '';
+            }
+        } catch (e) {
+            console.error('Failed to load local config', e);
+        }
+    }
 
     async function checkKeyStatus() {
         try {
             keyStatus.google = await HasAPIKey('google');
             keyStatus.anthropic = await HasAPIKey('anthropic');
             keyStatus.openai = await HasAPIKey('openai');
+            keyStatus.custom = await HasAPIKey('custom');
+            keyStatus.local = await HasAPIKey('local');
         } catch (e) {
             console.error('Failed to check API key status', e);
         }
     }
 
     async function handleSave() {
-        if (!apiKey.trim()) {
+        if (selectedProvider !== 'local' && !apiKey.trim()) {
             showStatus('APIキーを入力してください。', 'error');
             return;
         }
@@ -39,14 +75,56 @@
         showStatus('保存中...', '');
 
         try {
-            await SaveAPIKey(selectedProvider, apiKey);
+            if (selectedProvider === 'custom') {
+                await SaveCustomBaseURL(customBaseURL);
+            }
+            if (selectedProvider === 'local') {
+                await SaveLocalLLMConfig(localLLMType, localLLMURL);
+                if (apiKey.trim()) {
+                    await SaveAPIKey('local', apiKey);
+                } else {
+                    await SaveAPIKey('local', '');
+                }
+            } else {
+                await SaveAPIKey(selectedProvider, apiKey);
+            }
             apiKey = ''; // 入力欄をクリア
             await checkKeyStatus();
-            showStatus(`${selectedProvider.toUpperCase()} のAPIキーをセキュアに保存しました。`, 'success');
+            EventsEmit('llm-key-updated', selectedProvider);
+            
+            let displayName = selectedProvider === 'openai' ? 'ChatGPT' : 
+                              selectedProvider === 'custom' ? 'カスタム互換' : 
+                              selectedProvider === 'local' ? 'ローカルLLM' : 
+                              selectedProvider.toUpperCase();
+            showStatus(`${displayName} の設定を保存しました。`, 'success');
         } catch (e) {
             showStatus(`保存に失敗しました: ${e.message || e}`, 'error');
         } finally {
             isSaving = false;
+        }
+    }
+
+    async function handleTestConnection() {
+        isTesting = true;
+        showStatus('テスト接続中...', 'testing');
+
+        try {
+            let testURL = '';
+            if (selectedProvider === 'custom') {
+                testURL = customBaseURL;
+            } else if (selectedProvider === 'local') {
+                testURL = localLLMURL;
+                if (!testURL) {
+                    testURL = localLLMType === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234';
+                }
+            }
+            const res = await TestAPIKeyConnection(selectedProvider, apiKey, testURL);
+            showStatus(`${res}`, 'success');
+            EventsEmit('llm-key-updated', selectedProvider);
+        } catch (e) {
+            showStatus(`接続失敗: ${e.message || e}`, 'error');
+        } finally {
+            isTesting = false;
         }
     }
 
@@ -59,7 +137,7 @@
                     statusMessage = '';
                     statusType = '';
                 }
-            }, 4000);
+            }, 6000);
         }
     }
 </script>
@@ -73,12 +151,12 @@
         <div class="header-text">
             <h2>API認証キー設定</h2>
             <p class="description">
-                APIキーはWindows資格情報マネージャー（セキュアストレージ）へ暗号化して安全に保存されます。
+                APIキーはWindows内で暗号化して安全に保存されます。
             </p>
         </div>
     </div>
 
-    <div class="status-summary">
+    <div class="status-summary" style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px;">
         <div class="status-badge {keyStatus.google ? 'registered' : 'unregistered'}">
             <span class="indicator-dot"></span>
             Gemini: {keyStatus.google ? '登録済み' : '未登録'}
@@ -86,6 +164,18 @@
         <div class="status-badge {keyStatus.anthropic ? 'registered' : 'unregistered'}">
             <span class="indicator-dot"></span>
             Claude: {keyStatus.anthropic ? '登録済み' : '未登録'}
+        </div>
+        <div class="status-badge {keyStatus.openai ? 'registered' : 'unregistered'}">
+            <span class="indicator-dot"></span>
+            chatGPT: {keyStatus.openai ? '登録済み' : '未登録'}
+        </div>
+        <div class="status-badge {keyStatus.custom ? 'registered' : 'unregistered'}">
+            <span class="indicator-dot"></span>
+            カスタム: {keyStatus.custom ? '登録済み' : '未登録'}
+        </div>
+        <div class="status-badge {keyStatus.local ? 'registered' : 'unregistered'}">
+            <span class="indicator-dot"></span>
+            ローカルLLM: {keyStatus.local ? 'キー登録あり' : 'キーなし（又は未登録）'}
         </div>
     </div>
 
@@ -95,24 +185,77 @@
             <select id="provider-select" bind:value={selectedProvider} on:change={() => { statusMessage = ''; }}>
                 <option value="google">Google (Gemini)</option>
                 <option value="anthropic">Anthropic (Claude)</option>
-                <option value="openai">OpenAI / 互換サーバー</option>
+                <option value="openai">OpenAI (ChatGPT)</option>
+                <option value="custom">カスタム互換サーバー</option>
+                <option value="local">ローカルLLM (Ollama/LM Studio)</option>
             </select>
         </div>
 
+        {#if selectedProvider === 'custom'}
+            <div class="form-group">
+                <label for="custom-url-input">接続先ベースURL</label>
+                <input 
+                    id="custom-url-input" 
+                    type="text" 
+                    placeholder="http://localhost:8080/v1" 
+                    bind:value={customBaseURL}
+                    disabled={isSaving || isTesting}
+                />
+            </div>
+        {/if}
+
+        {#if selectedProvider === 'local'}
+            <div class="form-group">
+                <label for="local-llm-type">ローカルLLMタイプ</label>
+                <select id="local-llm-type" bind:value={localLLMType} disabled={isSaving || isTesting}>
+                    <option value="ollama">Ollama</option>
+                    <option value="lmstudio">LM Studio (OpenAI互換)</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="local-url-input">接続先ベースURL</label>
+                <input 
+                    id="local-url-input" 
+                    type="text" 
+                    placeholder={localLLMType === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234'} 
+                    bind:value={localLLMURL}
+                    disabled={isSaving || isTesting}
+                />
+                <span class="input-hint">
+                    {#if localLLMType === 'ollama'}
+                        Ollamaの標準: http://localhost:11434
+                    {:else}
+                        LM Studioの標準: http://localhost:1234 (ネイティブAPI /api/v1/models を自動検出します)
+                    {/if}
+                </span>
+            </div>
+        {/if}
+
         <div class="form-group">
-            <label for="apikey-input">APIキー</label>
+            <label for="apikey-input">
+                {selectedProvider === 'local' ? 'APIキー / トークン (オプショナル)' : 'APIキー'}
+            </label>
             <input 
                 id="apikey-input" 
                 type="password" 
-                placeholder="APIキーを入力..." 
+                placeholder={selectedProvider === 'local' ? '不要な場合は空欄のままにしてください' : 'APIキーを入力...'} 
                 bind:value={apiKey}
-                disabled={isSaving}
+                disabled={isSaving || isTesting}
             />
         </div>
 
-        <div class="action-bar">
-            <button class="btn-primary" on:click={handleSave} disabled={isSaving}>
-                {isSaving ? '保存中...' : 'セキュアに保存'}
+        <div class="action-bar" style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button 
+                class="btn-secondary" 
+                on:click={handleTestConnection} 
+                disabled={isSaving || isTesting}
+                style="background: transparent; color: var(--accent-color); border: 1px solid var(--accent-color); padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.85rem;"
+            >
+                {isTesting ? '接続確認中...' : 'テスト接続'}
+            </button>
+            <button class="btn-primary" on:click={handleSave} disabled={isSaving || isTesting}>
+                {isSaving ? '保存中...' : '設定を保存'}
             </button>
         </div>
     </div>
@@ -298,5 +441,12 @@
         background: rgba(255, 71, 87, 0.08);
         color: #ff4757;
         border: 1px solid rgba(255, 71, 87, 0.2);
+    }
+
+    .input-hint {
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        margin-top: 4px;
+        display: block;
     }
 </style>

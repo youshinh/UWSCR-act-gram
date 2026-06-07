@@ -142,7 +142,6 @@
     try {
       const answer = await App.AskManualContext(q, activeStep?.image_path || "");
       chatHistory = [...chatHistory, { role: "assistant", text: answer }];
-      playTTS(answer);
     } catch (err) {
       chatHistory = [...chatHistory, { role: "assistant", text: "回答の取得中にエラーが発生しました。" }];
     }
@@ -185,16 +184,16 @@
         </svg>
         <div class="header-text">
           <h2>シナリオ自動生成</h2>
-          <p class="description" style="margin: 0; font-size: 0.8rem; color: var(--text-secondary);">操作レコーダーが保存した生の操作ログフォルダを指定すると、論理的ステップに自動分割し、自動再生用スクリプトを含む対話型ガイドを生成します。</p>
+          <p class="description" style="margin: 0; font-size: 0.8rem; color: var(--text-secondary);">レコーダーが保存した操作ログフォルダを指定すると、記録した操作をステップに分割し、再生用スクリプトを含む対話型ガイドを生成します。</p>
         </div>
       </div>
       {#if steps.length > 0}
-        <button class="btn-browse" on:click={handleExportToDev} style="background: var(--accent-soft); border: 1px solid var(--accent-color); color: var(--accent-color); font-weight: 600; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s; font-size: 0.75rem; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+        <button class="gradient-btn" on:click={handleExportToDev} style="display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 20px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
             <polyline points="16 18 22 12 16 6"/>
             <polyline points="8 6 2 12 8 18"/>
           </svg>
-          スクリプト開発で編集する
+          シナリオを編集
         </button>
       {/if}
     </div>
@@ -241,7 +240,8 @@
               src={activeStepBase64} 
               alt="操作箇所のプレビュー" 
               class="viewport-img transition-transform duration-700 ease-out"
-              style={zoomStyle}
+              style="{zoomStyle} cursor: zoom-in;"
+              on:click={() => window.dispatchEvent(new CustomEvent('zoom-image', { detail: activeStepBase64 }))}
             />
           {:else if imageLoadError}
             <div class="empty-viewport">
@@ -326,22 +326,22 @@
 
     <!-- 右：業務アシスタント -->
     <div class="copilot-panel card">
-      <div class="copilot-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+      <div class="copilot-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box;">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span class="copilot-dot"></span>
           <h3>業務アシスタント</h3>
         </div>
         <button 
           on:click={openRAGFolder} 
-          style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.65rem; padding: 3px 8px; border-radius: 4px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px;"
+          style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px; white-space: nowrap; margin-right: 4px;"
           title="質問の参照ソースとなるファイルを追加します"
         >
-          📂 知識フォルダを開く
+          📂 知識フォルダ
         </button>
       </div>
 
       <div class="rag-help-text" style="padding: 10px 16px; background: rgba(128, 128, 128, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.7rem; color: var(--text-secondary); line-height: 1.4;">
-        💡 <b>業務知識の提供方法:</b> 上記の「知識フォルダを開く」ボタンを押し、開いたフォルダ内に仕様書やマニュアルのテキストファイル（.txt, .md）を配置してください。その内容をベースに質問に回答できるようになります。
+        <b>業務知識の提供方法:</b> 上記の「知識フォルダ」ボタンを押し、開いたフォルダ内に業務マニュアルや仕様書のテキストファイル、画像、PDF、またはOfficeドキュメント（.docx, .xlsx, .pptx）を配置してください。その内容をベースに質問に回答できるようになります。
       </div>
 
       {#if chatHistory.length > 0}
@@ -350,7 +350,7 @@
             on:click={clearChat}
             style="background: transparent; border: none; color: var(--accent-color); font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;"
           >
-            🔄 履歴を消去して最初の質問選択に戻る
+            🔄 最初の質問選択に戻る
           </button>
         </div>
       {/if}
@@ -358,7 +358,7 @@
       <div class="chat-container">
         {#if chatHistory.length === 0}
           <div class="chat-empty">
-            <p>現在のステップや業務知識について、コパイロットに質問することができます。</p>
+            <p>現在のステップや業務知識について、アシスタントに質問することができます。</p>
             <div class="suggested-chips">
               <button class="chip" on:click={() => { userQuestion = "現在の操作手順について教えてください。"; askAI(); }}>手順を質問</button>
               <button class="chip" on:click={() => { userQuestion = "この画面の入力値の根拠は何ですか？"; askAI(); }}>入力の根拠を質問</button>
@@ -367,7 +367,7 @@
         {/if}
         {#each chatHistory as chat}
           <div class="chat-bubble-wrapper {chat.role === 'user' ? 'user-align' : 'assistant-align'}">
-            <span class="chat-sender">{chat.role === 'user' ? '現場担当者' : 'コパイロット'}</span>
+            <span class="chat-sender">{chat.role === 'user' ? '現場担当者' : 'アシスタント'}</span>
             <div class="chat-bubble {chat.role === 'user' ? 'user-bubble' : 'assistant-bubble'}">
               {chat.text}
             </div>

@@ -15,9 +15,15 @@ type LayerConfig struct {
 
 // Config はアプリケーション全体の設定を保持します。
 type Config struct {
-	Port      int                    `yaml:"port"`
-	UWSCRPath string                 `yaml:"uwscr_path"`
-	Layers    map[string]LayerConfig `yaml:"layers"`
+	Port            int                    `yaml:"port"`
+	UWSCRPath       string                 `yaml:"uwscr_path"`
+	KnowledgeDir    string                 `yaml:"knowledge_dir"`
+	UWSCRDocURL     string                 `yaml:"uwscr_doc_url"`
+	CustomBaseURL   string                 `yaml:"custom_base_url"`
+	LocalLLMType    string                 `yaml:"local_llm_type"`
+	LocalLLMURL     string                 `yaml:"local_llm_url"`
+	Layers          map[string]LayerConfig `yaml:"layers"`
+	UseUnifiedModel bool                   `yaml:"use_unified_model"`
 }
 
 const (
@@ -27,6 +33,7 @@ const (
 
 // GetConfigPath は設定ファイルの保存先パスを返します。
 // 実行ファイルのディレクトリに保存するようにします。
+// ... (後続の処理)
 func GetConfigPath() string {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -36,13 +43,18 @@ func GetConfigPath() string {
 }
 
 // LoadConfig は設定ファイルから設定を読み込みます。ファイルがない場合はデフォルト値を返します。
+// 返却される設定オブジェクトに空の部分があれば自動補正します。
 func LoadConfig() (*Config, error) {
 	configPath := GetConfigPath()
 
 	// デフォルト値
 	config := &Config{
-		Port:      DefaultPort,
-		UWSCRPath: "",
+		Port:            DefaultPort,
+		UWSCRPath:       "",
+		UWSCRDocURL:     "https://stuncloud.github.io/UWSCR/",
+		UseUnifiedModel: true,
+		LocalLLMType:    "ollama",
+		LocalLLMURL:     "",
 		Layers: map[string]LayerConfig{
 			"brain":   {Provider: "google", Model: "gemini-flash-lite-latest"},
 			"eye":     {Provider: "google", Model: "gemini-flash-lite-latest"},
@@ -74,6 +86,28 @@ func LoadConfig() (*Config, error) {
 	}
 	if config.Layers == nil {
 		config.Layers = make(map[string]LayerConfig)
+	}
+	if config.KnowledgeDir == "" {
+		config.KnowledgeDir = filepath.Join(filepath.Dir(configPath), "knowledge")
+	}
+	if config.UWSCRDocURL == "" {
+		config.UWSCRDocURL = "https://stuncloud.github.io/UWSCR/"
+	}
+	if config.CustomBaseURL == "" {
+		config.CustomBaseURL = "http://localhost:8080/v1"
+	}
+	if config.LocalLLMType == "" {
+		config.LocalLLMType = "ollama"
+	}
+
+	// "ollama" プロバイダーを "local" プロバイダーに自動移行
+	for k, v := range config.Layers {
+		if v.Provider == "ollama" {
+			config.Layers[k] = LayerConfig{
+				Provider: "local",
+				Model:    v.Model,
+			}
+		}
 	}
 
 	return config, nil

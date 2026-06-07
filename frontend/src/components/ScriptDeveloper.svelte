@@ -1,10 +1,12 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import * as wailsRuntime from '../../wailsjs/runtime/runtime.js';
+  import CodeEditor from './CodeEditor.svelte';
 
   const App = window.go.main.App;
 
   export let importedSteps = null;
+  export let activeTab; // Bind activeTab to switch tabs dynamically
 
   // モード切り替え: 'batch' (ワンショット開発) or 'step' (マルチステップ開発)
   let mode = 'batch';
@@ -17,7 +19,8 @@
       code: s.uws_code || '',
       logs: '',
       status: 'idle',
-      sessionContext: null
+      sessionContext: null,
+      highlightedLine: null
     }));
     activeStepIndex = 0;
     mode = 'step'; // ステップ開発モードに切り替え
@@ -33,7 +36,18 @@
   let isCapturing = false;
   let statusMessage = '';
   let isError = false;
+  
+  // ワンショット検証用の状態
+  let isBatchTestRunning = false;
+  let batchLogs = '';
+  let batchStatus = 'idle'; // 'idle', 'generating', 'running', 'success', 'error'
+  let batchHighlightedLine = null;
   let sessionContext = null;
+
+  // 右クリックコンテキストメニュー用
+  let showContextMenu = false;
+  let contextMenuPos = { x: 0, y: 0 };
+  let contextMenuTarget = 'batch'; // 'batch' or 'step'
 
   // マルチステップ開発用状態
   let steps = [
@@ -44,19 +58,109 @@
       code: `// メモ帳を起動\nEXEC("notepad.exe")\nSLEEP(1.0)\nPRINT "[" + GETTIME() + "] メモ帳を起動しました"`,
       logs: '',
       status: 'idle', // 'idle', 'generating', 'running', 'success', 'error'
-      sessionContext: null
+      sessionContext: null,
+      highlightedLine: null
     }
   ];
   let activeStepIndex = 0;
   let isTestRunning = false;
 
+  function closeContextMenu() {
+    showContextMenu = false;
+  }
+
   onMount(async () => {
+    window.addEventListener('click', closeContextMenu);
     try {
       savePath = await App.GetDefaultScriptPath();
     } catch (err) {
       showStatus('デフォルト保存パスの取得に失敗しました', true);
     }
+    return () => {
+      window.removeEventListener('click', closeContextMenu);
+    };
   });
+
+  function parseErrorLine(logs) {
+    if (!logs) return null;
+    const match = logs.match(/uws\[(\d+),\s*\d+\]/);
+    if (match) {
+      const lineNum = parseInt(match[1], 10);
+      console.log("[ScriptDeveloper] Parsed error line:", lineNum);
+      return lineNum;
+    }
+    return null;
+  }
+
+  function handleContextMenu(event, target) {
+    event.preventDefault();
+    contextMenuTarget = target;
+    contextMenuPos = { x: event.clientX, y: event.clientY };
+    showContextMenu = true;
+  }
+
+  async function handlePasteImage(event, isStepMode = false) {
+    const items = (event.clipboardData || event.originalEvent?.clipboardData)?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const base64 = e.target.result.split(',')[1];
+          const newContext = {
+            active_title: 'Clipboard Image',
+            screenshot_base64: base64
+          };
+          if (isStepMode) {
+            steps[activeStepIndex].sessionContext = newContext;
+            steps = [...steps];
+            showStatus('クリップボードから画像を貼り付けました (ステップ用)');
+          } else {
+            sessionContext = newContext;
+            showStatus('クリップボードから画像を貼り付けました (ワンショット用)');
+          }
+        };
+        reader.readAsDataURL(file);
+        event.preventDefault();
+        break;
+      }
+    }
+  }
+
+  async function pasteFromClipboard(isStepMode = false) {
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageTypes = item.types.filter(type => type.startsWith('image/'));
+        if (imageTypes.length > 0) {
+          const blob = await item.getType(imageTypes[0]);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const base64 = e.target.result.split(',')[1];
+            const newContext = {
+              active_title: 'Clipboard Image',
+              screenshot_base64: base64
+            };
+            if (isStepMode) {
+              steps[activeStepIndex].sessionContext = newContext;
+              steps = [...steps];
+              showStatus('クリップボードから画像を取得しました (ステップ用)');
+            } else {
+              sessionContext = newContext;
+              showStatus('クリップボードから画像を取得しました (ワンショット用)');
+            }
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      showStatus('クリップボードに画像が見つかりませんでした', true);
+    } catch (e) {
+      console.error('Failed to read clipboard:', e);
+      showStatus('クリップボードからの読み取り権限がないか、画像がありません', true);
+    }
+  }
 
   function showStatus(msg, err = false) {
     statusMessage = msg;
@@ -175,8 +279,9 @@
         await App.SaveScriptFile(savePath, generatedCode);
       }
       
-      showStatus('スクリプトを実行中... ログは「コンソール」タブを確認してください');
+      showStatus('スクリプトを実行中... ログ表示へ自動遷移します');
       await App.RunScript(savePath);
+      activeTab = 'run'; // 自動でコンソールタブに遷移
     } catch (err) {
       showStatus(`実行エラー: ${err.message || err}`, true);
     }
@@ -309,6 +414,7 @@
       const result = await App.TestRunScript(step.code);
       step.logs = result.logs;
       step.status = result.success ? 'success' : 'error';
+      step.highlightedLine = result.success ? null : parseErrorLine(result.logs);
       if (result.success) {
         showStatus('テスト実行が正常に終了しました（検証成功）');
       } else {
@@ -330,6 +436,37 @@
       showStatus('UWSCRプロセスを強制終了しました。');
     } catch (err) {
       showStatus(`停止エラー: ${err.message || err}`, true);
+    }
+  }
+
+  async function handleRefactorStep(instruction) {
+    const step = steps[activeStepIndex];
+    if (!step.code.trim()) {
+      showStatus('修正対象のコードがありません', true);
+      return;
+    }
+    if (!instruction.trim()) {
+      showStatus('修正指示を入力してください', true);
+      return;
+    }
+
+    step.status = 'generating';
+    steps = [...steps];
+    isLoading = true;
+    showStatus('指示に基づいてコードを修正中...');
+
+    try {
+      const corrected = await App.CorrectScript(instruction, step.code, "");
+      step.code = corrected;
+      step.status = 'idle';
+      step.logs = '';
+      showStatus('指示に基づいてコードを修正しました。再度テスト実行を行ってください。');
+    } catch (err) {
+      step.status = 'error';
+      showStatus(`修正エラー: ${err.message || err}`, true);
+    } finally {
+      steps = [...steps];
+      isLoading = false;
     }
   }
 
@@ -361,7 +498,7 @@
 
   function combineAllSteps() {
     let combined = `// ==========================================\n`;
-    combined += `// UWSCR::actgram 自動生成・検証済スクリプト\n`;
+    combined += `// actgram::UWSCR 自動生成・検証済スクリプト\n`;
     combined += `// 生成日時: ${new Date().toLocaleString()}\n`;
     combined += `// ==========================================\n\n`;
 
@@ -408,10 +545,147 @@
 
     try {
       await App.SaveScriptFile(savePath, combined);
-      showStatus('結合スクリプトを実行中... ログは「コンソール」タブを確認してください');
+      showStatus('結合スクリプトを実行中... ログ表示へ自動遷移します');
       await App.RunScript(savePath);
+      activeTab = 'run'; // 自動でコンソールタブに遷移
     } catch (err) {
       showStatus(`実行エラー: ${err.message || err}`, true);
+    }
+  }
+
+  async function handleTestRunBatch() {
+    if (!generatedCode.trim()) {
+      showStatus('検証するコードがありません', true);
+      return;
+    }
+
+    batchStatus = 'running';
+    isBatchTestRunning = true;
+    showStatus('UWSCRでテスト実行中...');
+
+    try {
+      const result = await App.TestRunScript(generatedCode);
+      batchLogs = result.logs;
+      batchStatus = result.success ? 'success' : 'error';
+      batchHighlightedLine = result.success ? null : parseErrorLine(result.logs);
+      if (result.success) {
+        showStatus('テスト実行が正常に終了しました（検証成功）');
+      } else {
+        showStatus('テスト実行がエラーで終了しました。自動修正を実行するか、コードを修正してください。', true);
+      }
+    } catch (err) {
+      batchStatus = 'error';
+      batchLogs = (batchLogs || '') + `\n[System Error] ${err.message || err}`;
+      showStatus(`テスト実行エラー: ${err.message || err}`, true);
+    } finally {
+      isBatchTestRunning = false;
+    }
+  }
+
+  async function handleStopBatch() {
+    try {
+      await App.StopScript();
+      showStatus('UWSCRプロセスを強制終了しました。');
+    } catch (err) {
+      showStatus(`停止エラー: ${err.message || err}`, true);
+    }
+  }
+
+  let showRefactorModal = false;
+  let refactorPrompt = '';
+  let refactorTarget = 'batch'; // 'batch' or 'step'
+
+  function openRefactorModal(target) {
+    refactorTarget = target;
+    refactorPrompt = '';
+    showRefactorModal = true;
+  }
+
+  async function executeRefactor() {
+    if (!refactorPrompt.trim()) {
+      showStatus('修正指示を入力してください', true);
+      return;
+    }
+    showRefactorModal = false;
+    if (refactorTarget === 'batch') {
+      await handleRefactorBatch(refactorPrompt);
+    } else {
+      await handleRefactorStep(refactorPrompt);
+    }
+  }
+
+  async function handleRefactorBatch(instruction) {
+    if (!generatedCode.trim()) {
+      showStatus('修正対象のコードがありません', true);
+      return;
+    }
+    if (!instruction.trim()) {
+      showStatus('修正指示を入力してください', true);
+      return;
+    }
+
+    batchStatus = 'generating';
+    isLoading = true;
+    showStatus('指示に基づいてコードを修正中...');
+
+    try {
+      const corrected = await App.CorrectScript(instruction, generatedCode, "");
+      generatedCode = corrected;
+      batchStatus = 'idle';
+      batchLogs = '';
+      showStatus('指示に基づいてコードを修正しました。再度テスト実行を行ってください。');
+    } catch (err) {
+      batchStatus = 'error';
+      showStatus(`修正エラー: ${err.message || err}`, true);
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  async function handleCorrectBatch() {
+    if (!generatedCode.trim() || !batchLogs.trim()) {
+      showStatus('修正対象のコードまたはログがありません', true);
+      return;
+    }
+
+    batchStatus = 'generating';
+    isLoading = true;
+    showStatus('エラーログを解析してコードを自動修正中...');
+
+    try {
+      const corrected = await App.CorrectScript(prompt || "自動生成スクリプト", generatedCode, batchLogs);
+      generatedCode = corrected;
+      batchStatus = 'idle';
+      showStatus('修正コードを自動生成しました。再度テスト実行を行ってください。');
+    } catch (err) {
+      batchStatus = 'error';
+      showStatus(`自動修正エラー: ${err.message || err}`, true);
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  async function handleSaveStep(index) {
+    const step = steps[index];
+    if (!step || !step.code.trim()) {
+      showStatus('保存するコードがありません', true);
+      return;
+    }
+    
+    try {
+      const defaultName = `step_${step.id}_${step.title.replace(/[:\/\*\?"<>\|]/g, "_")}.uws`;
+      const selected = await App.SelectSaveFile(
+        "このステップの保存先を選択",
+        defaultName,
+        "UWSCR Script (*.uws)",
+        "*.uws"
+      );
+      if (selected) {
+        await App.SaveScriptFile(selected, step.code);
+        showStatus(`${step.title} のスクリプトを保存しました`);
+      }
+    } catch (err) {
+      showStatus(`ステップ保存エラー: ${err.message || err}`, true);
     }
   }
 </script>
@@ -445,7 +719,13 @@
             現在操作中の画面キャプチャとウィンドウ名を取得し、生成されるスクリプトの精度を劇的に向上させます。
           </p>
 
-          <div class="capture-box">
+          <div 
+            class="capture-box" 
+            on:paste={(e) => handlePasteImage(e, false)}
+            on:contextmenu={(e) => handleContextMenu(e, 'batch')}
+            tabindex="0"
+            style="outline: none;"
+          >
             {#if isCapturing}
               <div class="capturing-indicator">
                 <span class="spinner"></span>
@@ -458,17 +738,20 @@
                   <span class="value">{sessionContext.active_title}</span>
                 </div>
                 <div class="image-preview">
-                  <img src="data:image/png;base64,{sessionContext.screenshot_base64}" alt="Captured Desktop" />
+                  <img src="data:image/png;base64,{sessionContext.screenshot_base64}" alt="Captured Desktop" on:click={() => window.dispatchEvent(new CustomEvent('zoom-image', { detail: 'data:image/png;base64,' + sessionContext.screenshot_base64 }))} style="cursor: zoom-in;" />
                 </div>
               </div>
             {:else}
-              <div class="capture-placeholder">
+              <div class="capture-placeholder" style="display: flex; flex-direction: column; gap: 8px;">
                 <button class="btn-outlined w-100" on:click={handleCapture}>
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                     <circle cx="12" cy="13" r="4"></circle>
                   </svg>
                   現在の画面状況をキャプチャ
+                </button>
+                <button class="btn-outlined w-100" style="border-style: dashed; font-size: 0.8rem;" on:click={() => pasteFromClipboard(false)}>
+                  📋 クリップボードから貼付
                 </button>
               </div>
             {/if}
@@ -509,13 +792,41 @@
           </div>
 
           <div class="editor-container">
-            <textarea
-              class="code-textarea"
-              placeholder="// 生成されたコードがここに表示されます。直接編集も可能です。"
+            <CodeEditor
               bind:value={generatedCode}
-              disabled={isLoading}
-              spellcheck="false"
-            ></textarea>
+              placeholder="// 生成されたコードがここに表示されます。直接編集も可能です。"
+              highlightedLine={batchHighlightedLine}
+              on:input={() => batchHighlightedLine = null}
+            />
+          </div>
+
+          <!-- ワンショット検証用のテスト実行とデバッグ -->
+          <div class="step-test-section" style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 16px; margin-bottom: 16px;">
+            <div class="step-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">テスト実行と自動デバッグ</h4>
+              <div class="test-btn-group" style="display: flex; gap: 8px;">
+                <button class="btn-outlined btn-small" on:click={handleTestRunBatch} disabled={isBatchTestRunning || !generatedCode} style="font-size: 0.7rem; padding: 4px 8px;">
+                  ▶ テスト実行
+                </button>
+                <button class="btn-outlined btn-small danger-accent" on:click={handleStopBatch} disabled={!isBatchTestRunning} style="font-size: 0.7rem; padding: 4px 8px;">
+                  ■ 強制停止
+                </button>
+                <button class="btn-outlined btn-small" on:click={() => openRefactorModal('batch')} disabled={isLoading || !generatedCode} style="font-size: 0.7rem; padding: 4px 8px;">
+                  🪄 指示して修正
+                </button>
+                <button class="btn-solid btn-small correct-btn" on:click={handleCorrectBatch} disabled={isLoading || batchStatus !== 'error' || !batchLogs} style="font-size: 0.7rem; padding: 4px 8px;">
+                  🪄 エラーを自動修正
+                </button>
+              </div>
+            </div>
+            
+            <div class="step-logs-box" style="height: 100px; min-height: 100px;">
+              {#if batchLogs}
+                <pre class="logs-content {batchStatus === 'error' ? 'log-error' : ''}">{batchLogs}</pre>
+              {:else}
+                <div class="empty-logs">検証のテスト実行結果（ログおよびタイムスタンプ）がここに表示されます。</div>
+              {/if}
+            </div>
           </div>
 
           <!-- 保存と実行の設定 -->
@@ -608,11 +919,17 @@
                   disabled={isLoading}
                 ></textarea>
 
-                <div class="step-capture-box">
+                <div 
+                  class="step-capture-box" 
+                  on:paste={(e) => handlePasteImage(e, true)}
+                  on:contextmenu={(e) => handleContextMenu(e, 'step')}
+                  tabindex="0"
+                  style="outline: none;"
+                >
                   {#if currentStep.sessionContext}
                     <div class="step-context-info">
                       <div class="step-image-preview">
-                        <img src="data:image/png;base64,{currentStep.sessionContext.screenshot_base64}" alt="Captured Desktop" />
+                        <img src="data:image/png;base64,{currentStep.sessionContext.screenshot_base64}" alt="Captured Desktop" on:click={() => window.dispatchEvent(new CustomEvent('zoom-image', { detail: 'data:image/png;base64,' + currentStep.sessionContext.screenshot_base64 }))} style="cursor: zoom-in;" />
                       </div>
                       <div class="step-context-actions">
                         <span class="window-title-tag" title={currentStep.sessionContext.active_title}>{currentStep.sessionContext.active_title}</span>
@@ -620,9 +937,12 @@
                       </div>
                     </div>
                   {:else}
-                    <div class="step-capture-placeholder">
+                    <div class="step-capture-placeholder" style="display: flex; flex-direction: column; gap: 6px;">
                       <button class="btn-outlined btn-small" on:click={handleCaptureStep} disabled={isCapturing}>
-                        📸 画面をキャプチャ
+                        📸 キャプチャ
+                      </button>
+                      <button class="btn-outlined btn-small" style="border-style: dashed;" on:click={() => pasteFromClipboard(true)}>
+                        📋 クリップボードから貼付
                       </button>
                     </div>
                   {/if}
@@ -644,19 +964,24 @@
 
             <!-- コードエディタ -->
             <div class="step-code-section">
-              <div class="step-section-title">
-                <h4>2. UWSCRスクリプト（直接編集して条件分岐を追記可能）</h4>
+              <div class="step-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h4 style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">2. UWSCRスクリプト（直接編集して条件分岐を追記可能）</h4>
+                <button class="btn-outlined btn-small" on:click={() => handleSaveStep(activeStepIndex)} disabled={isLoading || !steps[activeStepIndex].code} style="font-size: 0.7rem; padding: 4px 8px;">
+                  💾 このステップを保存
+                </button>
               </div>
               <p class="section-desc">生成されたスクリプトです。ユーザーが直接エディタ内で `IFB` などの条件分岐を追記して教えることができます。</p>
               
               <div class="editor-container step-editor-container">
-                <textarea
-                  class="code-textarea"
-                  placeholder="// コードがここに生成されます。直接条件分岐（IFB 〜 ENDIF）などを書き足してください。"
+                <CodeEditor
                   bind:value={steps[activeStepIndex].code}
-                  disabled={isLoading}
-                  spellcheck="false"
-                ></textarea>
+                  placeholder="// コードがここに生成されます。直接条件分岐（IFB 〜 ENDIF）などを書き足してください。"
+                  highlightedLine={steps[activeStepIndex].highlightedLine}
+                  on:input={() => {
+                    steps[activeStepIndex].highlightedLine = null;
+                    steps = [...steps];
+                  }}
+                />
               </div>
             </div>
 
@@ -670,6 +995,9 @@
                   </button>
                   <button class="btn-outlined btn-small danger-accent" on:click={handleStopStep} disabled={!isTestRunning}>
                     ■ 強制停止
+                  </button>
+                  <button class="btn-outlined btn-small" on:click={() => openRefactorModal('step')} disabled={isLoading || !currentStep.code}>
+                    🪄 指示して修正
                   </button>
                   <button class="btn-solid btn-small correct-btn" on:click={handleCorrectStep} disabled={isLoading || currentStep.status !== 'error' || !currentStep.logs}>
                     🪄 エラーを自動修正
@@ -734,6 +1062,48 @@
           {/if}
         {/each}
       </p>
+    </div>
+  {/if}
+
+  {#if showContextMenu}
+    <div 
+      class="custom-context-menu" 
+      style="position: fixed; top: {contextMenuPos.y}px; left: {contextMenuPos.x}px; z-index: 10000; background: #1e1e24; border: 1px solid #2d2d3c; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); padding: 4px 0;"
+    >
+      <button 
+        style="background: transparent; border: none; color: #e2e8f0; padding: 8px 16px; font-size: 0.85rem; width: 100%; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 8px;"
+        on:click={() => {
+          pasteFromClipboard(contextMenuTarget === 'step');
+          closeContextMenu();
+        }}
+      >
+        📋 クリップボードから画像を貼り付け
+      </button>
+    </div>
+  {/if}
+  <!-- 修正指示入力ダイアログ (モーダル小窓) -->
+  {#if showRefactorModal}
+    <div class="refactor-modal-overlay" on:click={() => showRefactorModal = false}>
+      <div class="refactor-modal-window" on:click|stopPropagation>
+        <div class="refactor-modal-header">
+          <h3>🪄 スクリプトの修正指示</h3>
+          <button class="refactor-modal-close" on:click={() => showRefactorModal = false}>✕</button>
+        </div>
+        <div class="refactor-modal-body">
+          <p class="refactor-modal-desc">
+            既存のスクリプトに対して、AIへの修正・調整指示を入力してください。
+          </p>
+          <textarea
+            class="refactor-textarea"
+            placeholder="例: ウィンドウの座標がズレているので mouseorg(id) を適切に呼び出すように修正して。 / ボタンのクリック処理を追加して。"
+            bind:value={refactorPrompt}
+          ></textarea>
+        </div>
+        <div class="refactor-modal-footer">
+          <button class="btn-outlined" on:click={() => showRefactorModal = false}>キャンセル</button>
+          <button class="btn-solid refactor-exec-btn" on:click={executeRefactor} disabled={!refactorPrompt.trim()}>修正を実行</button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -817,6 +1187,7 @@
     height: 100%;
     overflow-y: auto;
     padding-right: 4px;
+    min-height: 0;
   }
 
   .editor-panel {
@@ -824,6 +1195,9 @@
     flex-direction: column;
     gap: 20px;
     height: 100%;
+    overflow-y: auto;
+    padding-right: 4px;
+    min-height: 0;
   }
 
   .panel-section {
@@ -1246,7 +1620,7 @@
   .step-item-card.active {
     border-color: var(--text-color);
     background: var(--accent-soft);
-    border-left: 4px solid var(--accent-color);
+    border-left: 6px solid var(--accent-color);
   }
 
   .step-item-header {
@@ -1341,6 +1715,7 @@
     display: flex;
     flex-direction: column;
     gap: 24px;
+    flex-shrink: 0;
   }
 
   .step-detail-section, .step-code-section, .step-test-section {
@@ -1477,6 +1852,20 @@
     font-family: Consolas, Monaco, monospace;
     font-size: 0.8rem;
     line-height: 1.4;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .empty-logs {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    opacity: 0.7;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
   }
 
   .logs-content {
@@ -1503,5 +1892,110 @@
     0% { opacity: 0.6; }
     50% { opacity: 1; }
     100% { opacity: 0.6; }
+  }
+
+  /* 修正指示ダイアログ用スタイル */
+  .refactor-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .refactor-modal-window {
+    width: 480px;
+    background: #1e1e24;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  :global(html.light-mode) .refactor-modal-window {
+    background: #ffffff;
+  }
+
+  .refactor-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .refactor-modal-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-color);
+  }
+
+  .refactor-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .refactor-modal-close:hover {
+    color: var(--text-color);
+  }
+
+  .refactor-modal-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .refactor-modal-desc {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  .refactor-textarea {
+    width: 100%;
+    height: 100px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    color: var(--text-color);
+    resize: none;
+    box-sizing: border-box;
+  }
+
+  .refactor-textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+  }
+
+  .refactor-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .refactor-exec-btn {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--bg-primary);
   }
 </style>

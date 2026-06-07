@@ -31,6 +31,8 @@ export function GetDefaultScriptPath():Promise<string>;
 
 export function GetImageBase64(arg1:string):Promise<string>;
 
+export function GetLocalLLMConfig():Promise<main.LocalLLMConfig>;
+
 export function HasAPIKey(arg1:string):Promise<boolean>;
 
 export function MinimizeWindow():Promise<void>;
@@ -40,6 +42,8 @@ export function OpenKnowledgeDir():Promise<void>;
 export function ProposeOptimization(arg1:string,arg2:string):Promise<string>;
 
 export function ReadScriptFile(arg1:string):Promise<string>;
+
+export function RestoreDefaultReference():Promise<void>;
 
 export function RestoreWindow():Promise<void>;
 
@@ -53,6 +57,14 @@ export function SaveConfig(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveConfigs(arg1:string):Promise<void>;
 
+export function SaveCustomBaseURL(arg1:string):Promise<void>;
+
+export function SaveErrorReflection(arg1:string,arg2:string):Promise<void>;
+
+export function SaveKnowledgeDirAndURL(arg1:string,arg2:string):Promise<void>;
+
+export function SaveLocalLLMConfig(arg1:string,arg2:string):Promise<void>;
+
 export function SaveScriptFile(arg1:string,arg2:string):Promise<void>;
 
 export function SaveUWSCRPath(arg1:string):Promise<void>;
@@ -63,10 +75,16 @@ export function SelectFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SelectSaveFile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
+export function SetMiniMode(arg1:boolean,arg2:string):Promise<void>;
+
 export function StartRecording():Promise<void>;
 
 export function StopRecording():Promise<string>;
 
 export function StopScript():Promise<void>;
+
+export function SyncUWSCRReference():Promise<void>;
+
+export function TestAPIKeyConnection(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function TestRunScript(arg1:string):Promise<main.TestRunResult>;
