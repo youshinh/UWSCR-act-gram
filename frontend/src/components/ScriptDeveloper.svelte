@@ -281,15 +281,27 @@
   }
 
   async function handleLoad() {
-    if (!savePath.trim()) {
-      showStatus('読み込むスクリプトのパスを入力してください', true);
-      return;
-    }
-    isLoading = true;
     try {
-      const content = await App.ReadScriptFile(savePath);
-      generatedCode = content;
-      showStatus('スクリプトをファイルから読み込みました');
+      // 1. 「開く」ダイアログを直接呼び出す（上書き警告は出ません）
+      const selected = await App.SelectFile(
+        "読み込むスクリプトを選択",
+        "UWSCR Script (*.uws)",
+        "*.uws"
+      );
+
+      // 2. ファイルが選択された場合の処理
+      if (selected) {
+        // 保存先パスの入力欄に選択したパスをセット
+        savePath = selected;
+        
+        isLoading = true;
+        
+        // 3. ファイルの内容を読み込んでエディタにセット（読み込みの実行）
+        const content = await App.ReadScriptFile(savePath);
+        generatedCode = content;
+        
+        showStatus('スクリプトをファイルから読み込みました');
+      }
     } catch (err) {
       showStatus(`読み込みエラー: ${err.message || err}`, true);
     } finally {

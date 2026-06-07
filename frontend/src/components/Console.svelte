@@ -20,37 +20,41 @@
     let optimizationResult = null;
     let originalCode = "";
 
-onMount(async () => {
+    onMount(async () => {
         try {
-            savePath = await App.GetDefaultScriptPath();
+            config = await GetConfig();
         } catch (err) {
-            showStatus('デフォルト保存パスの取得に失敗しました', true);
+            console.error(err);
         }
-        window.addEventListener('click', closeContextMenu);
 
-        // ★追加: テスト実行中のUWSCRリアルタイムログを画面側でキャッチする
-        wailsRuntime.EventsOn('uwscr_log', (logLine) => {
-            // 1. ワンショット開発モードのテスト実行中なら batchLogs にリアルタイム追記
-            if (isBatchTestRunning) {
-                batchLogs = (batchLogs ? batchLogs + "\n" : "") + logLine.message;
-            }
+        // ★修正: PLAYタブ専用の正しいログ受信処理
+        wailsRuntime.EventsOn('uwscr_log', (logData) => {
+            // ログ配列に追加 (画面にリアルタイム表示される)
+            logs = [...logs, logData];
             
-            // 2. マルチステップ開発モードのテスト実行中なら、選択中のステップのlogsにリアルタイム追記
-            if (isTestRunning && steps[activeStepIndex]) {
-                steps[activeStepIndex].logs = (steps[activeStepIndex].logs ? steps[activeStepIndex].logs + "\n" : "") + logLine.message;
-                steps = [...steps]; // Svelteのリアクティビティをトリガー
+            // 最新のログに自動スクロール
+            if (logContainer) {
+                setTimeout(() => {
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }, 10);
+            }
+
+            // 終了通知メッセージを検知したらRUNNINGロックを解除
+            if (logData.message && logData.message.includes("[System] プロセスが正常に終了しました。")) {
+                isRunning = false;
             }
         });
 
-        return () => {
-            window.removeEventListener('click', closeContextMenu);
-        };
+        // 万が一のための強制終了シグナル受信
+        wailsRuntime.EventsOn('script_finished', () => {
+            isRunning = false;
+        });
     });
 
     onDestroy(() => {
-        window.removeEventListener('click', closeContextMenu);
-        // ★追加: コンポーネント破棄時にイベント購読を解除してメモリリークを防ぐ
+        // コンポーネント破棄時にイベント購読を解除
         wailsRuntime.EventsOff('uwscr_log');
+        wailsRuntime.EventsOff('script_finished');
     });
 
     async function handleRun() {

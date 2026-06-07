@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -29,7 +28,6 @@ func NewOrchestrator(app *App) *Orchestrator {
 
 // FindUWSCRPath は優先度に従って uwscr.exe のパスを探索します。
 func (o *Orchestrator) FindUWSCRPath() (string, error) {
-	// 優先度 1: 実行中の actgram.exe と同じディレクトリ
 	exePath, err := os.Executable()
 	if err == nil {
 		localPath := filepath.Join(filepath.Dir(exePath), "uwscr.exe")
@@ -38,14 +36,12 @@ func (o *Orchestrator) FindUWSCRPath() (string, error) {
 		}
 	}
 
-	// 優先度 2: config.yaml で指定されたパス
 	if o.app.cfg != nil && o.app.cfg.UWSCRPath != "" {
 		if _, err := os.Stat(o.app.cfg.UWSCRPath); err == nil {
 			return o.app.cfg.UWSCRPath, nil
 		}
 	}
 
-	// 優先度 3: システム環境変数 PATH
 	path, err := exec.LookPath("uwscr.exe")
 	if err == nil {
 		return path, nil
@@ -60,7 +56,13 @@ func (o *Orchestrator) StopCurrentScript() error {
 	defer o.mu.Unlock()
 
 	if o.activeCmd == nil || o.activeCmd.Process == nil {
-		return fmt.Errorf("実行中のスクリプトはありません。")
+		// プロセスがない場合でも正常終了合図を送り、UIのロックを解除させます
+		o.emitLog("[System] プロセスが正常に終了しました。", false)
+		if o.app != nil {
+			o.app.SetMiniMode(false, "play")
+			runtime.EventsEmit(o.app.ctx, "script_finished", true)
+		}
+		return nil
 	}
 
 	o.emitLog("[System] ユーザー指示によりスクリプトの実行を強制停止します...", false)
@@ -70,31 +72,31 @@ func (o *Orchestrator) StopCurrentScript() error {
 	}
 
 	o.activeCmd = nil
+	o.emitLog("[System] プロセスが正常に終了しました。", false)
+	if o.app != nil {
+		runtime.EventsEmit(o.app.ctx, "script_finished", true)
+	}
 	return nil
 }
 
-// RunScript は指定された UWS スクリプトをトランスパイルして非同期実行します。
+// RunScript は指定された UWS スクリプトをトランスパイルして非同期実行します（通常再生）。
 func (o *Orchestrator) RunScript(scriptPath string) error {
-	// 1. パスの特定
 	uwscrPath, err := o.FindUWSCRPath()
 	if err != nil {
 		return err
 	}
 
-	// 2. スクリプトの読み込み
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("スクリプトの読み込みに失敗しました: %v", err)
 	}
 
-	// 3. トランスパイル
 	transpiler := NewTranspiler(o.app.cfg.Port)
 	transpiled, err := transpiler.Transpile(string(scriptContent))
 	if err != nil {
 		return fmt.Errorf("トランスパイルエラー: %v", err)
 	}
 
-	// 4. 一時ファイル（temp_exec_YYYYMMDD_HHMMSS_xxx.uws）の生成
 	exePath, _ := os.Executable()
 	timestamp := time.Now().Format("20060102_150405_000")
 	tempPath := filepath.Join(filepath.Dir(exePath), fmt.Sprintf("temp_exec_%s.uws", timestamp))
@@ -106,9 +108,8 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 
 	isGuide := strings.Contains(scriptPath, "interactive_guide.uws")
 
-	// 5. 非同期実行 (Goroutine)
 	go func() {
-		defer os.Remove(tempPath) // 終了後に一時ファイルを削除
+		defer os.Remove(tempPath)
 
 		cmd := exec.Command(uwscrPath, tempPath)
 
@@ -140,32 +141,32 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 
 		o.emitLog(fmt.Sprintf("[System] 起動成功 (PID: %d)", cmd.Process.Pid), false)
 		if !isGuide {
-			o.app.SetMiniMode(true, "play") // ミニモードに切り替え
+			o.app.SetMiniMode(true, "play")
 		}
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 
-		// stdoutの読み込み
+		// 💡 app.goの ConvertToUTF8IfNeeded を使って、行ごとに安全にデコードします
 		go func() {
 			defer wg.Done()
 			scanner := bufio.NewScanner(stdout)
 			for scanner.Scan() {
-				o.emitLog(scanner.Text(), false)
+				text := ConvertToUTF8IfNeeded(scanner.Bytes())
+				o.emitLog(text, false)
 			}
 		}()
 
-		// stderr of reading
 		go func() {
 			defer wg.Done()
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
-				o.emitLog(scanner.Text(), true)
+				text := ConvertToUTF8IfNeeded(scanner.Bytes())
+				o.emitLog(text, true)
 			}
 		}()
 
 		wg.Wait()
-		// 実行終了を待つ
 		err = cmd.Wait()
 
 		o.mu.Lock()
@@ -175,7 +176,7 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		o.mu.Unlock()
 
 		if !isGuide {
-			o.app.SetMiniMode(false, "play") // ウィンドウを通常サイズに復元
+			o.app.SetMiniMode(false, "play")
 		}
 
 		if err != nil {
@@ -183,12 +184,16 @@ func (o *Orchestrator) RunScript(scriptPath string) error {
 		} else {
 			o.emitLog("[System] プロセスが正常に終了しました。", false)
 		}
+		
+		if o.app != nil {
+			runtime.EventsEmit(o.app.ctx, "script_finished", true)
+		}
 	}()
 
 	return nil
 }
 
-// RunScriptSync はスクリプトを指定時間タイムアウト付きで同期実行し、実行結果のログと終了コードを返します。
+// RunScriptSync はスクリプトを指定時間タイムアウト付きで同期実行します（テスト実行）。
 func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string, bool, error) {
 	uwscrPath, err := o.FindUWSCRPath()
 	if err != nil {
@@ -227,39 +232,36 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("Stdout pipe failed: %v", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("Stderr pipe failed: %v", err)
 	}
 
 	o.mu.Lock()
 	o.activeCmd = cmd
 	o.mu.Unlock()
-	defer func() {
+
+	var logBuf strings.Builder
+	var logMu sync.Mutex
+
+	writeLog := func(msg string, isErr bool) {
+		logMu.Lock()
+		logBuf.WriteString(msg + "\n")
+		logMu.Unlock()
+		o.emitLog(msg, isErr)
+	}
+
+	writeLog("[System] テスト実行プロセスを起動中...", false)
+	if err := cmd.Start(); err != nil {
+		writeLog(fmt.Errorf("[Error] プロセスの起動に失敗しました: %v", err).Error(), true)
 		o.mu.Lock()
 		if o.activeCmd == cmd {
 			o.activeCmd = nil
 		}
 		o.mu.Unlock()
-	}()
-
-	o.emitLog("[System] テスト実行プロセスを起動中...", false)
-	if err := cmd.Start(); err != nil {
-		o.emitLog(fmt.Sprintf("[Error] テスト起動に失敗: %v", err), true)
-		return "", false, err
-	}
-
-	var logBuf bytes.Buffer
-	var mu sync.Mutex
-
-	// ログ書き込み用のヘルパー
-	writeLog := func(text string, isError bool) {
-		mu.Lock()
-		logBuf.WriteString(text + "\n")
-		mu.Unlock()
-		o.emitLog(text, isError)
+		return logBuf.String(), false, err
 	}
 
 	var wg sync.WaitGroup
@@ -269,7 +271,7 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 		defer wg.Done()
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
-			writeLog(scanner.Text(), false)
+			writeLog(ConvertToUTF8IfNeeded(scanner.Bytes()), false)
 		}
 	}()
 
@@ -277,12 +279,18 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 		defer wg.Done()
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
-			writeLog(scanner.Text(), true)
+			writeLog(ConvertToUTF8IfNeeded(scanner.Bytes()), true)
 		}
 	}()
 
 	wg.Wait()
 	err = cmd.Wait()
+
+	o.mu.Lock()
+	if o.activeCmd == cmd {
+		o.activeCmd = nil
+	}
+	o.mu.Unlock()
 
 	success := true
 	if err != nil {
@@ -293,7 +301,6 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 		}
 		writeLog(fmt.Sprintf("[System] テスト実行がエラーで終了しました: %v", err), true)
 	} else {
-		// UWSCRは構文エラー時にも0を返すことがあるため、ログ文言による強制失敗チェック
 		logStr := logBuf.String()
 		if strings.Contains(logStr, "構文エラー") || strings.Contains(logStr, "ありません") || strings.Contains(logStr, "Error:") || strings.Contains(logStr, "エラー") {
 			success = false
@@ -303,7 +310,6 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 		}
 	}
 
-	// テスト失敗時は自己学習用反射ファイルにエラー内容を記録
 	if !success {
 		_ = o.app.SaveErrorReflection(string(scriptContent), logBuf.String())
 	}
@@ -311,12 +317,18 @@ func (o *Orchestrator) RunScriptSync(scriptPath string, timeoutSec int) (string,
 	return logBuf.String(), success, nil
 }
 
+// 💡 修正の要諦：JSクラッシュ防止のため、必ずタイムスタンプを付与し、LogLineオブジェクトとして送信します。
 func (o *Orchestrator) emitLog(message string, isError bool) {
+	if o.app == nil || o.app.ctx == nil {
+		return
+	}
+
 	type LogLine struct {
 		Message string `json:"message"`
 		IsError bool   `json:"is_error"`
 	}
-	// ログメッセージの先頭にタイムスタンプを付加
+
+	// フロントエンドのパース処理を壊さないよう、必ず先頭に [HH:MM:SS.mmm] を付与します
 	timestamp := time.Now().Format("15:04:05.000")
 	formattedMsg := fmt.Sprintf("[%s] %s", timestamp, message)
 
@@ -325,4 +337,3 @@ func (o *Orchestrator) emitLog(message string, isError bool) {
 		IsError: isError,
 	})
 }
-
