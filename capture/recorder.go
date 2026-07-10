@@ -14,7 +14,9 @@ import (
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	goruntime "runtime"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Windows API constants
@@ -142,6 +144,14 @@ func NewRecorder(ctx context.Context, logDir string) *Recorder {
 		events:      make([]RecordEvent, 0),
 		captureChan: make(chan RecordEvent, 100),
 	}
+	if err := r.eventsFile.Sync(); err != nil {
+		log.Printf("[Recorder] events.jsonl sync failed: %v", err)
+	}
+	if err := r.eventsFile.Close(); err != nil {
+		log.Printf("[Recorder] events.jsonl close failed: %v", err)
+	}
+	r.eventsFile = nil
+	r.jsonlEncoder = nil
 }
 
 func (r *Recorder) writeSessionJSON() error {
@@ -200,6 +210,7 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 		r.stateMu.Unlock()
 		return fmt.Errorf("すでに記録中です。")
 	}
+	r.captureChan = make(chan RecordEvent, 100)
 	r.isRecording = true
 	r.channelClosed = false
 	globalRecorder = r
@@ -335,7 +346,7 @@ func (r *Recorder) Stop() (string, error) {
 
 	// Emit notification to Svelte frontend
 	if r.ctx != nil {
-		runtime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
+		wailsruntime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
 	}
 
 	return r.logDir, nil
@@ -343,10 +354,10 @@ func (r *Recorder) Stop() (string, error) {
 
 // OS Thread helper locks
 func runtimeLockOSThread() {
-	syscall.ForkLock.Lock()
+	goruntime.LockOSThread()
 }
 func runtimeUnlockOSThread() {
-	syscall.ForkLock.Unlock()
+	goruntime.UnlockOSThread()
 }
 
 func getThreadId() uint32 {
@@ -534,6 +545,38 @@ func (r *Recorder) callCapture(captureFunc func(string) error, outputPath string
 	done := make(chan error, 1)
 	go func() {
 		defer func() {
+			if recovered := recover(); recovered != nil {
+				done <- fmt.Errorf("capture panic: %v", recovered)
+			}
+		}()
+		done <- captureFunc(outputPath)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(captureTimeout):
+		return fmt.Errorf("capture timed out after %s", captureTimeout)
+	}
+}
+
+func (r *Recorder) callCapture(captureFunc func(string) error, outputPath string) (err error) {
+	if captureFunc == nil {
+		return fmt.Errorf("capture function is nil")
+	}
+
+	select {
+	case r.captureSem <- struct{}{}:
+		// Continue with this single capture. The semaphore bounds leaked capture
+		// goroutines if a timed-out capture function never returns.
+	case <-time.After(captureTimeout):
+		return fmt.Errorf("capture skipped because another capture is still running after %s", captureTimeout)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			<-r.captureSem
 			if recovered := recover(); recovered != nil {
 				done <- fmt.Errorf("capture panic: %v", recovered)
 			}
