@@ -95,7 +95,6 @@ type RecordEvent struct {
 type Recorder struct {
 	ctx context.Context
 
-	stopMu        sync.Mutex
 	stateMu       sync.Mutex
 	isRecording   bool
 	channelClosed bool
@@ -119,7 +118,6 @@ type Recorder struct {
 	senderWG    sync.WaitGroup
 	workerWG    sync.WaitGroup
 	hookWG      sync.WaitGroup
-	captureSem  chan struct{}
 }
 
 var (
@@ -145,8 +143,15 @@ func NewRecorder(ctx context.Context, logDir string) *Recorder {
 		logDir:      logDir,
 		events:      make([]RecordEvent, 0),
 		captureChan: make(chan RecordEvent, 100),
-		captureSem:  make(chan struct{}, 1),
 	}
+	if err := r.eventsFile.Sync(); err != nil {
+		log.Printf("[Recorder] events.jsonl sync failed: %v", err)
+	}
+	if err := r.eventsFile.Close(); err != nil {
+		log.Printf("[Recorder] events.jsonl close failed: %v", err)
+	}
+	r.eventsFile = nil
+	r.jsonlEncoder = nil
 }
 
 func (r *Recorder) writeSessionJSON() error {
@@ -208,16 +213,8 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	r.captureChan = make(chan RecordEvent, 100)
 	r.isRecording = true
 	r.channelClosed = false
-	r.mouseHook = 0
-	r.kbdHook = 0
-	r.hookThreadId = 0
 	globalRecorder = r
 	r.stateMu.Unlock()
-
-	r.dataMu.Lock()
-	r.events = r.events[:0]
-	r.prevX, r.prevY = 0, 0
-	r.dataMu.Unlock()
 
 	// Ensure evidence directories exist
 	if err := os.MkdirAll(filepath.Join(r.logDir, "captures"), 0755); err != nil {
@@ -297,9 +294,11 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	err = <-errChan
 	if err != nil {
 		r.stopAcceptingEvents()
-		if cleanupErr := r.finishRecording(); cleanupErr != nil {
-			log.Printf("[Recorder] cleanup after hook startup failure failed: %v", cleanupErr)
-		}
+		r.hookWG.Wait()
+		r.senderWG.Wait()
+		r.closeCaptureChannel()
+		r.workerWG.Wait()
+		r.closeEventsFile()
 		return err
 	}
 
@@ -308,8 +307,11 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 }
 
 // Stop unhooks events and closes channels
+func (r *Recorder) Stop() (string, error) {
+	if !r.stopAcceptingEvents() {
+		return "", fmt.Errorf("記録が開始されていません。")
+	}
 
-func (r *Recorder) finishRecording() error {
 	// Stop hooks first so callbacks can no longer enqueue new senders.
 	if r.hookThreadId != 0 {
 		postThreadMessage.Call(uintptr(r.hookThreadId), 0x0012, 0, 0) // WM_QUIT = 0x0012
@@ -324,26 +326,6 @@ func (r *Recorder) finishRecording() error {
 	r.workerWG.Wait()
 
 	r.closeEventsFile()
-	return nil
-}
-
-func (r *Recorder) Stop() (string, error) {
-	r.stopMu.Lock()
-	defer r.stopMu.Unlock()
-
-	if !r.stopAcceptingEvents() {
-		r.stateMu.Lock()
-		alreadyClosed := r.channelClosed
-		r.stateMu.Unlock()
-		if alreadyClosed {
-			return r.logDir, nil
-		}
-		return "", fmt.Errorf("記録が開始されていません。")
-	}
-
-	if err := r.finishRecording(); err != nil {
-		return "", err
-	}
 
 	// Save final log.json
 	logPath := filepath.Join(r.logDir, "log.json")
@@ -552,6 +534,29 @@ func (r *Recorder) processEvent(ev RecordEvent, captureFunc func(string) error, 
 				log.Printf("[Recorder Worker] events.jsonl sync failed: %v", err)
 			}
 		}
+	}
+}
+
+func (r *Recorder) callCapture(captureFunc func(string) error, outputPath string) (err error) {
+	if captureFunc == nil {
+		return fmt.Errorf("capture function is nil")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				done <- fmt.Errorf("capture panic: %v", recovered)
+			}
+		}()
+		done <- captureFunc(outputPath)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(captureTimeout):
+		return fmt.Errorf("capture timed out after %s", captureTimeout)
 	}
 }
 
