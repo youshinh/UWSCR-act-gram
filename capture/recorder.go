@@ -14,7 +14,9 @@ import (
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	goruntime "runtime"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Windows API constants
@@ -24,6 +26,8 @@ const (
 	WM_KEYDOWN     = 0x0100
 	WM_LBUTTONDOWN = 0x0201
 	WM_RBUTTONDOWN = 0x0204
+
+	captureTimeout = 15 * time.Second
 )
 
 // UI Automation GUIDs
@@ -72,30 +76,39 @@ type MSG struct {
 
 // RecordEvent represents a structured user action
 type RecordEvent struct {
-	Timestamp int64  `json:"timestamp"` // Epoch ms
-	Type      string `json:"type"`      // "click", "keydown", "window_change"
-	X         int    `json:"x,omitempty"`
-	Y         int    `json:"y,omitempty"`
-	RelX      int    `json:"rel_x,omitempty"`
-	RelY      int    `json:"rel_y,omitempty"`
-	Key       string `json:"key,omitempty"`
-	Window    string `json:"window"`
-	Control   string `json:"control,omitempty"`    // e.g. "Button", "ComboBox"
-	ControlID string `json:"control_id,omitempty"` // AutomationId
-	Value     string `json:"value,omitempty"`      // Value or state
-	ImagePath string `json:"image_path,omitempty"` // Screenshot path
+	Timestamp  int64  `json:"timestamp"` // Epoch ms
+	Type       string `json:"type"`      // "click", "keydown", "window_change"
+	X          int    `json:"x,omitempty"`
+	Y          int    `json:"y,omitempty"`
+	RelX       int    `json:"rel_x,omitempty"`
+	RelY       int    `json:"rel_y,omitempty"`
+	Key        string `json:"key,omitempty"`
+	Window     string `json:"window"`
+	Control    string `json:"control,omitempty"`    // e.g. "Button", "ComboBox"
+	ControlID  string `json:"control_id,omitempty"` // AutomationId
+	Value      string `json:"value,omitempty"`      // Value or state
+	ImagePath  string `json:"image_path,omitempty"` // Screenshot path
+	WindowRect *Rect  `json:"-"`                    // Active window rect for evidence output
 }
 
 // Recorder manages the Win32 hooks and UI Automation
 type Recorder struct {
-	ctx          context.Context
-	mu           sync.Mutex
-	isRecording  bool
+	ctx context.Context
+
+	stopMu        sync.Mutex
+	stateMu       sync.Mutex
+	isRecording   bool
+	channelClosed bool
+
+	dataMu       sync.Mutex
 	logDir       string
 	events       []RecordEvent
 	lastWindow   string
 	prevX, prevY int // For distance calculation later
-	
+	startedAt    int64
+	eventsFile   *os.File
+	jsonlEncoder *json.Encoder
+
 	// Hook handles
 	mouseHook    uintptr
 	kbdHook      uintptr
@@ -103,26 +116,49 @@ type Recorder struct {
 
 	// Async capture channel
 	captureChan chan RecordEvent
-	wg          sync.WaitGroup
-	quitChan    chan struct{}
+	senderWG    sync.WaitGroup
+	workerWG    sync.WaitGroup
+	hookWG      sync.WaitGroup
+	captureSem  chan struct{}
 }
 
 var (
-	user32               = syscall.NewLazyDLL("user32.dll")
-	setWindowsHookEx     = user32.NewProc("SetWindowsHookExW")
-	callNextHookEx       = user32.NewProc("CallNextHookEx")
-	unhookWindowsHookEx  = user32.NewProc("UnhookWindowsHookEx")
-	getMessage           = user32.NewProc("GetMessageW")
-	postThreadMessage    = user32.NewProc("PostThreadMessageW")
-	getForegroundWindow  = user32.NewProc("GetForegroundWindow")
-	getWindowText        = user32.NewProc("GetWindowTextW")
-	getWindowRect        = user32.NewProc("GetWindowRect")
-	getCurrentThreadId   = kernel32.NewProc("GetCurrentThreadId")
-	kernel32             = syscall.NewLazyDLL("kernel32.dll")
+	user32              = syscall.NewLazyDLL("user32.dll")
+	setWindowsHookEx    = user32.NewProc("SetWindowsHookExW")
+	callNextHookEx      = user32.NewProc("CallNextHookEx")
+	unhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
+	getMessage          = user32.NewProc("GetMessageW")
+	postThreadMessage   = user32.NewProc("PostThreadMessageW")
+	getForegroundWindow = user32.NewProc("GetForegroundWindow")
+	getWindowText       = user32.NewProc("GetWindowTextW")
+	getWindowRect       = user32.NewProc("GetWindowRect")
+	getCurrentThreadId  = kernel32.NewProc("GetCurrentThreadId")
+	kernel32            = syscall.NewLazyDLL("kernel32.dll")
 
 	// Global recorder instance pointer for callback access
-	globalRecorder *Recorder
+	globalRecorderMu sync.RWMutex
+	globalRecorder   *Recorder
 )
+
+func setGlobalRecorder(r *Recorder) {
+	globalRecorderMu.Lock()
+	globalRecorder = r
+	globalRecorderMu.Unlock()
+}
+
+func clearGlobalRecorder(r *Recorder) {
+	globalRecorderMu.Lock()
+	if globalRecorder == r {
+		globalRecorder = nil
+	}
+	globalRecorderMu.Unlock()
+}
+
+func currentRecorder() *Recorder {
+	globalRecorderMu.RLock()
+	defer globalRecorderMu.RUnlock()
+	return globalRecorder
+}
 
 func NewRecorder(ctx context.Context, logDir string) *Recorder {
 	return &Recorder{
@@ -130,31 +166,115 @@ func NewRecorder(ctx context.Context, logDir string) *Recorder {
 		logDir:      logDir,
 		events:      make([]RecordEvent, 0),
 		captureChan: make(chan RecordEvent, 100),
-		quitChan:    make(chan struct{}),
+		captureSem:  make(chan struct{}, 1),
 	}
+}
+
+func (r *Recorder) writeSessionJSON() error {
+	session := EvidenceSession{
+		SchemaVersion: "evidence/v1",
+		StartedAt:     r.startedAt,
+		EventsPath:    "events.jsonl",
+		CapturesDir:   "captures",
+		TemplatesDir:  "templates",
+	}
+	data, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return fmt.Errorf("session JSONの作成に失敗: %v", err)
+	}
+	return os.WriteFile(filepath.Join(r.logDir, "session.json"), data, 0644)
+}
+
+func (r *Recorder) stopAcceptingEvents() bool {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	if !r.isRecording {
+		return false
+	}
+	r.isRecording = false
+	clearGlobalRecorder(r)
+	return true
+}
+
+func (r *Recorder) closeCaptureChannel() {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	if r.channelClosed {
+		return
+	}
+	close(r.captureChan)
+	r.channelClosed = true
+}
+
+func (r *Recorder) closeEventsFile() {
+	if r.eventsFile == nil {
+		return
+	}
+	if err := r.eventsFile.Sync(); err != nil {
+		log.Printf("[Recorder] events.jsonl sync failed: %v", err)
+	}
+	if err := r.eventsFile.Close(); err != nil {
+		log.Printf("[Recorder] events.jsonl close failed: %v", err)
+	}
+	r.eventsFile = nil
+	r.jsonlEncoder = nil
 }
 
 // Start hooks keyboard and mouse events
 func (r *Recorder) Start(captureFunc func(string) error) error {
-	r.mu.Lock()
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
+
+	r.stateMu.Lock()
 	if r.isRecording {
-		r.mu.Unlock()
+		r.stateMu.Unlock()
 		return fmt.Errorf("すでに記録中です。")
 	}
+	r.captureChan = make(chan RecordEvent, 100)
 	r.isRecording = true
-	globalRecorder = r
-	r.mu.Unlock()
+	r.channelClosed = false
+	r.mouseHook = 0
+	r.kbdHook = 0
+	r.hookThreadId = 0
+	setGlobalRecorder(r)
+	r.stateMu.Unlock()
 
-	// Ensure directories exist
-	os.MkdirAll(filepath.Join(r.logDir, "captures"), 0755)
+	r.dataMu.Lock()
+	r.events = r.events[:0]
+	r.prevX, r.prevY = 0, 0
+	r.dataMu.Unlock()
+
+	// Ensure evidence directories exist
+	if err := os.MkdirAll(filepath.Join(r.logDir, "captures"), 0755); err != nil {
+		r.stopAcceptingEvents()
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(r.logDir, "templates"), 0755); err != nil {
+		r.stopAcceptingEvents()
+		return err
+	}
+	r.startedAt = time.Now().UnixNano() / int64(time.Millisecond)
+	if err := r.writeSessionJSON(); err != nil {
+		r.stopAcceptingEvents()
+		return err
+	}
+	eventsFile, err := os.OpenFile(filepath.Join(r.logDir, "events.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		r.stopAcceptingEvents()
+		return err
+	}
+	r.eventsFile = eventsFile
+	r.jsonlEncoder = json.NewEncoder(eventsFile)
 
 	// Start background Goroutine to process captures and write JSON logs
-	r.wg.Add(1)
+	r.workerWG.Add(1)
 	go r.worker(captureFunc)
 
 	// Start Windows message loop on a dedicated OS thread
 	errChan := make(chan error, 1)
+	r.hookWG.Add(1)
 	go func() {
+		defer r.hookWG.Done()
 		runtimeLockOSThread()
 		defer runtimeUnlockOSThread()
 
@@ -191,11 +311,12 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 		unhookWindowsHookEx.Call(r.mouseHook)
 	}()
 
-	err := <-errChan
+	err = <-errChan
 	if err != nil {
-		r.mu.Lock()
-		r.isRecording = false
-		r.mu.Unlock()
+		r.stopAcceptingEvents()
+		if cleanupErr := r.finishRecording(); cleanupErr != nil {
+			log.Printf("[Recorder] cleanup after hook startup failure failed: %v", cleanupErr)
+		}
 		return err
 	}
 
@@ -204,27 +325,49 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 }
 
 // Stop unhooks events and closes channels
-func (r *Recorder) Stop() (string, error) {
-	r.mu.Lock()
-	if !r.isRecording {
-		r.mu.Unlock()
-		return "", fmt.Errorf("記録が開始されていません。")
-	}
-	r.isRecording = false
-	r.mu.Unlock()
 
-	// Post WM_QUIT to hook thread message queue
+func (r *Recorder) finishRecording() error {
+	// Stop hooks first so callbacks can no longer enqueue new senders.
 	if r.hookThreadId != 0 {
 		postThreadMessage.Call(uintptr(r.hookThreadId), 0x0012, 0, 0) // WM_QUIT = 0x0012
 	}
+	r.hookWG.Wait()
 
-	// Close worker
-	close(r.quitChan)
-	r.wg.Wait()
+	// Wait for in-flight senders before closing the channel.
+	r.senderWG.Wait()
+	r.closeCaptureChannel()
+
+	// Wait for the worker to drain the closed capture channel.
+	r.workerWG.Wait()
+
+	r.closeEventsFile()
+	return nil
+}
+
+func (r *Recorder) Stop() (string, error) {
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
+
+	if !r.stopAcceptingEvents() {
+		r.stateMu.Lock()
+		alreadyClosed := r.channelClosed
+		r.stateMu.Unlock()
+		if alreadyClosed {
+			return r.logDir, nil
+		}
+		return "", fmt.Errorf("記録が開始されていません。")
+	}
+
+	if err := r.finishRecording(); err != nil {
+		return "", err
+	}
 
 	// Save final log.json
 	logPath := filepath.Join(r.logDir, "log.json")
-	data, err := json.MarshalIndent(r.events, "", "  ")
+	r.dataMu.Lock()
+	legacyEvents := append([]RecordEvent(nil), r.events...)
+	r.dataMu.Unlock()
+	data, err := json.MarshalIndent(legacyEvents, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("ログJSONの作成に失敗: %v", err)
 	}
@@ -238,7 +381,7 @@ func (r *Recorder) Stop() (string, error) {
 
 	// Emit notification to Svelte frontend
 	if r.ctx != nil {
-		runtime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
+		wailsruntime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
 	}
 
 	return r.logDir, nil
@@ -246,10 +389,10 @@ func (r *Recorder) Stop() (string, error) {
 
 // OS Thread helper locks
 func runtimeLockOSThread() {
-	syscall.ForkLock.Lock()
+	goruntime.LockOSThread()
 }
 func runtimeUnlockOSThread() {
-	syscall.ForkLock.Unlock()
+	goruntime.UnlockOSThread()
 }
 
 func getThreadId() uint32 {
@@ -266,22 +409,26 @@ func setHook(hookId int, callback uintptr) uintptr {
 func keyboardCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
 	if code >= 0 && wparam == WM_KEYDOWN {
 		kbd := (*KBDLLHOOKSTRUCT)(unsafe.Pointer(lparam))
-		
+
 		// If F8 was pressed, stop recording
 		if kbd.VkCode == 0x77 { // VK_F8 = 0x77
 			log.Println("[Recorder] F8 detected. Stopping recording...")
-			go func() {
-				globalRecorder.Stop()
-			}()
+			if rec := currentRecorder(); rec != nil {
+				go func() {
+					rec.Stop()
+				}()
+			}
 			return 1 // Block event propagation
 		}
 
 		keyName := getVkKeyName(kbd.VkCode)
 		if keyName != "" {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "keydown",
-				Key:  keyName,
-			})
+			if rec := currentRecorder(); rec != nil {
+				rec.pushEvent(RecordEvent{
+					Type: "keydown",
+					Key:  keyName,
+				})
+			}
 		}
 	}
 	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
@@ -292,11 +439,13 @@ func mouseCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
 	if code >= 0 {
 		mouse := (*MSLLHOOKSTRUCT)(unsafe.Pointer(lparam))
 		if wparam == WM_LBUTTONDOWN {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "click",
-				X:    int(mouse.Pt.X),
-				Y:    int(mouse.Pt.Y),
-			})
+			if rec := currentRecorder(); rec != nil {
+				rec.pushEvent(RecordEvent{
+					Type: "click",
+					X:    int(mouse.Pt.X),
+					Y:    int(mouse.Pt.Y),
+				})
+			}
 		}
 	}
 	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
@@ -306,85 +455,168 @@ func mouseCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
 func (r *Recorder) pushEvent(ev RecordEvent) {
 	ev.Timestamp = time.Now().UnixNano() / int64(time.Millisecond)
 	ev.Window = getActiveWindowTitle()
-	
-	if ev.Type == "click" {
-		hwnd, _, _ := getForegroundWindow.Call()
-		if hwnd != 0 {
-			var rect RECT
-			ret, _, _ := getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
-			if ret != 0 {
+
+	hwnd, _, _ := getForegroundWindow.Call()
+	if hwnd != 0 {
+		var rect RECT
+		ret, _, _ := getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
+		if ret != 0 {
+			ev.WindowRect = &Rect{
+				Left:   int(rect.Left),
+				Top:    int(rect.Top),
+				Right:  int(rect.Right),
+				Bottom: int(rect.Bottom),
+			}
+			if ev.Type == "click" {
 				ev.RelX = ev.X - int(rect.Left)
 				ev.RelY = ev.Y - int(rect.Top)
 			}
 		}
 	}
 
-	r.mu.Lock()
-	if !r.isRecording {
-		r.mu.Unlock()
+	r.stateMu.Lock()
+	if !r.isRecording || r.channelClosed {
+		r.stateMu.Unlock()
 		return
 	}
-	r.mu.Unlock()
+	r.senderWG.Add(1)
+	ch := r.captureChan
+	r.stateMu.Unlock()
 
-	r.captureChan <- ev
+	go func() {
+		defer r.senderWG.Done()
+		ch <- ev
+	}()
 }
 
 // Background Worker processes captures and UIA scans
 func (r *Recorder) worker(captureFunc func(string) error) {
-	defer r.wg.Done()
+	defer r.workerWG.Done()
 
-	for {
-		select {
-		case ev := <-r.captureChan:
-			// 1. Scan UI Automation element details if it's a click
-			if ev.Type == "click" {
-				ctrl, cid, val := inspectElementAtPoint(ev.X, ev.Y)
-				ev.Control = ctrl
-				ev.ControlID = cid
-				ev.Value = val
+	for ev := range r.captureChan {
+		r.stateMu.Lock()
+		recording := r.isRecording
+		r.stateMu.Unlock()
+		r.processEvent(ev, captureFunc, recording)
+	}
+}
 
-				// 2. Automated capture on click
-				imgFileName := fmt.Sprintf("event_%d.png", ev.Timestamp)
-				relPath := filepath.Join("captures", imgFileName)
-				absPath := filepath.Join(r.logDir, relPath)
+func (r *Recorder) processEvent(ev RecordEvent, captureFunc func(string) error, allowCapture bool) {
+	evidence := EvidenceEvent{
+		ID:        fmt.Sprintf("event_%d", ev.Timestamp),
+		Timestamp: ev.Timestamp,
+		Type:      ev.Type,
+		X:         ev.X,
+		Y:         ev.Y,
+		RelX:      ev.RelX,
+		RelY:      ev.RelY,
+		Key:       ev.Key,
+		Window: WindowInfo{
+			Title: ev.Window,
+			Rect:  ev.WindowRect,
+		},
+		CaptureStatus: CaptureStatus{OK: true},
+	}
 
-				err := captureFunc(absPath)
-				if err == nil {
-					ev.ImagePath = relPath
-					var px, py int
-					r.mu.Lock()
-					px, py = r.prevX, r.prevY
-					r.prevX, r.prevY = ev.X, ev.Y
-					r.mu.Unlock()
+	if ev.Type == "click" {
+		ctrl, cid, val := inspectElementAtPoint(ev.X, ev.Y)
+		ev.Control = ctrl
+		ev.ControlID = cid
+		ev.Value = val
+		evidence.UIAElement = &UIAElementInfo{ControlType: ctrl, AutomationID: cid, Value: val}
 
-					// Let marker draw Guidelines and Step-to-Step measurements
-					DrawMeasurementMarker(absPath, absPath, ev.X, ev.Y, px, py)
+		if allowCapture && captureFunc != nil {
+			images := &ImageEvidence{}
+			beforeRel := filepath.Join("captures", fmt.Sprintf("event_%d_before.png", ev.Timestamp))
+			beforeAbs := filepath.Join(r.logDir, beforeRel)
+			if err := r.callCapture(captureFunc, beforeAbs); err != nil {
+				evidence.CaptureStatus.OK = false
+				evidence.CaptureStatus.Errors = append(evidence.CaptureStatus.Errors, fmt.Sprintf("before screenshot: %v", err))
+				log.Printf("[Recorder Worker] Before screen capture failed: %v", err)
+			} else {
+				images.BeforePath = beforeRel
+				markedRel := filepath.Join("captures", fmt.Sprintf("event_%d_marked.png", ev.Timestamp))
+				markedAbs := filepath.Join(r.logDir, markedRel)
+				var px, py int
+				r.dataMu.Lock()
+				px, py = r.prevX, r.prevY
+				r.prevX, r.prevY = ev.X, ev.Y
+				r.dataMu.Unlock()
+				if err := DrawMeasurementMarker(beforeAbs, markedAbs, ev.X, ev.Y, px, py); err != nil {
+					evidence.CaptureStatus.OK = false
+					evidence.CaptureStatus.Errors = append(evidence.CaptureStatus.Errors, fmt.Sprintf("marker: %v", err))
+					log.Printf("[Recorder Worker] Marker drawing failed: %v", err)
 				} else {
-					log.Printf("[Recorder Worker] Screen capture failed: %v", err)
+					images.MarkedPath = markedRel
+					ev.ImagePath = markedRel
 				}
 			}
 
-			// Append to event list
-			r.mu.Lock()
-			r.events = append(r.events, ev)
-			r.mu.Unlock()
-
-		case <-r.quitChan:
-			// Process any remaining channel items
-			for len(r.captureChan) > 0 {
-				ev := <-r.captureChan
-				if ev.Type == "click" {
-					ctrl, cid, val := inspectElementAtPoint(ev.X, ev.Y)
-					ev.Control = ctrl
-					ev.ControlID = cid
-					ev.Value = val
-				}
-				r.mu.Lock()
-				r.events = append(r.events, ev)
-				r.mu.Unlock()
+			time.Sleep(150 * time.Millisecond)
+			afterRel := filepath.Join("captures", fmt.Sprintf("event_%d_after.png", ev.Timestamp))
+			afterAbs := filepath.Join(r.logDir, afterRel)
+			if err := r.callCapture(captureFunc, afterAbs); err != nil {
+				evidence.CaptureStatus.OK = false
+				evidence.CaptureStatus.Errors = append(evidence.CaptureStatus.Errors, fmt.Sprintf("after screenshot: %v", err))
+				log.Printf("[Recorder Worker] After screen capture failed: %v", err)
+			} else {
+				images.AfterPath = afterRel
 			}
-			return
+			if images.BeforePath != "" || images.AfterPath != "" || images.MarkedPath != "" {
+				evidence.Images = images
+			}
 		}
+	}
+
+	r.dataMu.Lock()
+	r.events = append(r.events, ev)
+	r.dataMu.Unlock()
+
+	if r.jsonlEncoder != nil {
+		if err := r.jsonlEncoder.Encode(evidence); err != nil {
+			log.Printf("[Recorder Worker] events.jsonl write failed: %v", err)
+		}
+	}
+}
+
+func (r *Recorder) callCapture(captureFunc func(string) error, outputPath string) (err error) {
+	if captureFunc == nil {
+		return fmt.Errorf("capture function is nil")
+	}
+
+	semTimer := time.NewTimer(captureTimeout)
+	select {
+	case r.captureSem <- struct{}{}:
+		if !semTimer.Stop() {
+			select {
+			case <-semTimer.C:
+			default:
+			}
+		}
+		// Continue with this single capture. The semaphore bounds leaked capture
+		// goroutines if a timed-out capture function never returns.
+	case <-semTimer.C:
+		return fmt.Errorf("capture skipped because another capture is still running after %s", captureTimeout)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			<-r.captureSem
+			if recovered := recover(); recovered != nil {
+				done <- fmt.Errorf("capture panic: %v", recovered)
+			}
+		}()
+		done <- captureFunc(outputPath)
+	}()
+
+	runTimer := time.NewTimer(captureTimeout)
+	defer runTimer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-runTimer.C:
+		return fmt.Errorf("capture timed out after %s", captureTimeout)
 	}
 }
 
@@ -456,7 +688,7 @@ func inspectElementAtPoint(x, y int) (controlType string, automationId string, v
 		if errPat == nil && resPat.Val != 0 {
 			togglePat := resPat.ToIDispatch()
 			defer togglePat.Release()
-			
+
 			stateVar, errState := oleutil.GetProperty(togglePat, "CurrentToggleState")
 			if errState == nil {
 				switch stateVar.Val {
