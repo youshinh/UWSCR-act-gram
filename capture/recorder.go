@@ -134,8 +134,29 @@ var (
 	kernel32            = syscall.NewLazyDLL("kernel32.dll")
 
 	// Global recorder instance pointer for callback access
-	globalRecorder *Recorder
+	globalRecorderMu sync.RWMutex
+	globalRecorder   *Recorder
 )
+
+func setGlobalRecorder(r *Recorder) {
+	globalRecorderMu.Lock()
+	globalRecorder = r
+	globalRecorderMu.Unlock()
+}
+
+func clearGlobalRecorder(r *Recorder) {
+	globalRecorderMu.Lock()
+	if globalRecorder == r {
+		globalRecorder = nil
+	}
+	globalRecorderMu.Unlock()
+}
+
+func currentRecorder() *Recorder {
+	globalRecorderMu.RLock()
+	defer globalRecorderMu.RUnlock()
+	return globalRecorder
+}
 
 func NewRecorder(ctx context.Context, logDir string) *Recorder {
 	return &Recorder{
@@ -378,18 +399,22 @@ func keyboardCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
 		// If F8 was pressed, stop recording
 		if kbd.VkCode == 0x77 { // VK_F8 = 0x77
 			log.Println("[Recorder] F8 detected. Stopping recording...")
-			go func() {
-				globalRecorder.Stop()
-			}()
+			if rec := currentRecorder(); rec != nil {
+				go func() {
+					rec.Stop()
+				}()
+			}
 			return 1 // Block event propagation
 		}
 
 		keyName := getVkKeyName(kbd.VkCode)
 		if keyName != "" {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "keydown",
-				Key:  keyName,
-			})
+			if rec := currentRecorder(); rec != nil {
+				rec.pushEvent(RecordEvent{
+					Type: "keydown",
+					Key:  keyName,
+				})
+			}
 		}
 	}
 	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
@@ -400,11 +425,13 @@ func mouseCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
 	if code >= 0 {
 		mouse := (*MSLLHOOKSTRUCT)(unsafe.Pointer(lparam))
 		if wparam == WM_LBUTTONDOWN {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "click",
-				X:    int(mouse.Pt.X),
-				Y:    int(mouse.Pt.Y),
-			})
+			if rec := currentRecorder(); rec != nil {
+				rec.pushEvent(RecordEvent{
+					Type: "click",
+					X:    int(mouse.Pt.X),
+					Y:    int(mouse.Pt.Y),
+				})
+			}
 		}
 	}
 	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
