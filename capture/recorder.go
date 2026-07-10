@@ -95,7 +95,6 @@ type RecordEvent struct {
 type Recorder struct {
 	ctx context.Context
 
-	stopMu        sync.Mutex
 	stateMu       sync.Mutex
 	isRecording   bool
 	channelClosed bool
@@ -115,16 +114,11 @@ type Recorder struct {
 	hookThreadId uint32
 
 	// Async capture channel
-	captureChan  chan RecordEvent
-	eventQueue   []RecordEvent
-	queueClosed  bool
-	queueMu      sync.Mutex
-	queueCond    *sync.Cond
-	senderWG     sync.WaitGroup
-	dispatcherWG sync.WaitGroup
-	workerWG     sync.WaitGroup
-	hookWG       sync.WaitGroup
-	captureSem   chan struct{}
+	captureChan chan RecordEvent
+	senderWG    sync.WaitGroup
+	workerWG    sync.WaitGroup
+	hookWG      sync.WaitGroup
+	captureSem  chan struct{}
 }
 
 var (
@@ -166,16 +160,13 @@ func currentRecorder() *Recorder {
 }
 
 func NewRecorder(ctx context.Context, logDir string) *Recorder {
-	r := &Recorder{
+	return &Recorder{
 		ctx:         ctx,
 		logDir:      logDir,
 		events:      make([]RecordEvent, 0),
 		captureChan: make(chan RecordEvent, 100),
-		eventQueue:  make([]RecordEvent, 0),
 		captureSem:  make(chan struct{}, 1),
 	}
-	r.queueCond = sync.NewCond(&r.queueMu)
-	return r
 }
 
 func (r *Recorder) writeSessionJSON() error {
@@ -230,9 +221,6 @@ func (r *Recorder) closeEventsFile() {
 
 // Start hooks keyboard and mouse events
 func (r *Recorder) Start(captureFunc func(string) error) error {
-	r.stopMu.Lock()
-	defer r.stopMu.Unlock()
-
 	r.stateMu.Lock()
 	if r.isRecording {
 		r.stateMu.Unlock()
@@ -241,24 +229,8 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	r.captureChan = make(chan RecordEvent, 100)
 	r.isRecording = true
 	r.channelClosed = false
-	r.mouseHook = 0
-	r.kbdHook = 0
-	r.hookThreadId = 0
 	setGlobalRecorder(r)
 	r.stateMu.Unlock()
-
-	r.dataMu.Lock()
-	r.events = r.events[:0]
-	r.prevX, r.prevY = 0, 0
-	r.dataMu.Unlock()
-
-	r.queueMu.Lock()
-	r.eventQueue = r.eventQueue[:0]
-	r.queueClosed = false
-	if r.queueCond == nil {
-		r.queueCond = sync.NewCond(&r.queueMu)
-	}
-	r.queueMu.Unlock()
 
 	// Ensure evidence directories exist
 	if err := os.MkdirAll(filepath.Join(r.logDir, "captures"), 0755); err != nil {
@@ -282,9 +254,7 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	r.eventsFile = eventsFile
 	r.jsonlEncoder = json.NewEncoder(eventsFile)
 
-	// Start background Goroutines to preserve event order and process captures.
-	r.dispatcherWG.Add(1)
-	go r.dispatchEvents()
+	// Start background Goroutine to process captures and write JSON logs
 	r.workerWG.Add(1)
 	go r.worker(captureFunc)
 
@@ -332,9 +302,11 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	err = <-errChan
 	if err != nil {
 		r.stopAcceptingEvents()
-		if cleanupErr := r.finishRecording(); cleanupErr != nil {
-			log.Printf("[Recorder] cleanup after hook startup failure failed: %v", cleanupErr)
-		}
+		r.hookWG.Wait()
+		r.senderWG.Wait()
+		r.closeCaptureChannel()
+		r.workerWG.Wait()
+		r.closeEventsFile()
 		return err
 	}
 
@@ -343,8 +315,11 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 }
 
 // Stop unhooks events and closes channels
+func (r *Recorder) Stop() (string, error) {
+	if !r.stopAcceptingEvents() {
+		return "", fmt.Errorf("記録が開始されていません。")
+	}
 
-func (r *Recorder) finishRecording() error {
 	// Stop hooks first so callbacks can no longer enqueue new senders.
 	if r.hookThreadId != 0 {
 		postThreadMessage.Call(uintptr(r.hookThreadId), 0x0012, 0, 0) // WM_QUIT = 0x0012
@@ -353,34 +328,12 @@ func (r *Recorder) finishRecording() error {
 
 	// Wait for in-flight senders before closing the channel.
 	r.senderWG.Wait()
-	r.closeEventQueue()
-	r.dispatcherWG.Wait()
 	r.closeCaptureChannel()
 
 	// Wait for the worker to drain the closed capture channel.
 	r.workerWG.Wait()
 
 	r.closeEventsFile()
-	return nil
-}
-
-func (r *Recorder) Stop() (string, error) {
-	r.stopMu.Lock()
-	defer r.stopMu.Unlock()
-
-	if !r.stopAcceptingEvents() {
-		r.stateMu.Lock()
-		alreadyClosed := r.channelClosed
-		r.stateMu.Unlock()
-		if alreadyClosed {
-			return r.logDir, nil
-		}
-		return "", fmt.Errorf("記録が開始されていません。")
-	}
-
-	if err := r.finishRecording(); err != nil {
-		return "", err
-	}
 
 	// Save final log.json
 	logPath := filepath.Join(r.logDir, "log.json")
@@ -500,44 +453,11 @@ func (r *Recorder) pushEvent(ev RecordEvent) {
 		return
 	}
 	r.senderWG.Add(1)
+	ch := r.captureChan
 	r.stateMu.Unlock()
 
 	defer r.senderWG.Done()
-	r.queueMu.Lock()
-	if !r.queueClosed {
-		r.eventQueue = append(r.eventQueue, ev)
-		r.queueCond.Signal()
-	}
-	r.queueMu.Unlock()
-}
-
-func (r *Recorder) closeEventQueue() {
-	r.queueMu.Lock()
-	r.queueClosed = true
-	r.queueCond.Broadcast()
-	r.queueMu.Unlock()
-}
-
-// dispatchEvents serializes callback events into captureChan in FIFO order.
-func (r *Recorder) dispatchEvents() {
-	defer r.dispatcherWG.Done()
-
-	for {
-		r.queueMu.Lock()
-		for len(r.eventQueue) == 0 && !r.queueClosed {
-			r.queueCond.Wait()
-		}
-		if len(r.eventQueue) == 0 && r.queueClosed {
-			r.queueMu.Unlock()
-			return
-		}
-		ev := r.eventQueue[0]
-		copy(r.eventQueue, r.eventQueue[1:])
-		r.eventQueue = r.eventQueue[:len(r.eventQueue)-1]
-		r.queueMu.Unlock()
-
-		r.captureChan <- ev
-	}
+	ch <- ev
 }
 
 // Background Worker processes captures and UIA scans
