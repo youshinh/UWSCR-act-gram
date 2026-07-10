@@ -478,7 +478,10 @@ func (r *Recorder) worker(captureFunc func(string) error) {
 	defer r.workerWG.Done()
 
 	for ev := range r.captureChan {
-		r.processEvent(ev, captureFunc, true)
+		r.stateMu.Lock()
+		recording := r.isRecording
+		r.stateMu.Unlock()
+		r.processEvent(ev, captureFunc, recording)
 	}
 }
 
