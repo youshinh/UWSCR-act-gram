@@ -130,16 +130,16 @@ APIキーは設定ファイルに書きません。Windows資格情報マネー�
 
 ## Quick Start (配布バイナリの利用)
 
-1. [GitHub Releases](https://github.com/youshinh/UWSCR-act-gram/releases) から最新の `actgram-v1.0.0-windows-amd64.zip` をダウンロードします。
-2. ZIP ファイルを展開します（`uwscr.exe` も同梱されており、追加セットアップ不要で即座に使えます）。
-3. `actgram.exe` をダブルクリックして起動します。
+1. [GitHub Releases](https://github.com/youshinh/UWSCR-act-gram/releases) から最新の `actgram-v1.0.0-windows-amd64.zip` をダウンロードして展開します。
+2. 公式 [UWSCR Releases](https://github.com/stuncloud/UWSCR/releases) から `uwscr.exe` をダウンロードし、`actgram.exe` と同じフォルダに配置します（※アプリ内の「環境設定」から別フォルダのパスを指定することも可能です）。
+3. `actgram.exe` を起動します。
 
 ---
 
 ## Requirements
 
 - Windows 10 / 11 (64bit)
-- [UWSCR](https://github.com/stuncloud/UWSCR/releases) (`uwscr.exe` を `actgram.exe` と同じフォルダに配置。配布パッケージには同梱済み)
+- [UWSCR](https://github.com/stuncloud/UWSCR/releases) (`uwscr.exe` を `actgram.exe` と同じフォルダに配置、または設定画面でパス指定)
 
 ---
 
