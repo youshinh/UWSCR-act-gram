@@ -9,5 +9,12 @@
   "author": {
     "name": "yoush",
     "email": "[EMAIL_ADDRESS]"
+  },
+  "info": {
+    "companyName": "actgram",
+    "productName": "actgram",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright (c) 2026 yoush",
+    "comments": "RPA Sidecar for UWSCR"
   }
 }

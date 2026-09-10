@@ -134,6 +134,13 @@ APIキーは設定ファイルに書きません。Windows資格情報マネー�
 2. 公式 [UWSCR Releases](https://github.com/stuncloud/UWSCR/releases) から `uwscr.exe` をダウンロードし、`actgram.exe` と同じフォルダに配置します（※アプリ内の「環境設定」から別フォルダのパスを指定することも可能です）。
 3. `actgram.exe` を起動します。
 
+> [!NOTE]
+> **Windows Defender による誤検知について**:
+> 本アプリは操作レコーダー機能のために Windows の低レベルフック API（`SetWindowsHookExW`）を使用しているため、Windows Defender 等のセキュリティ機能（SmartScreen / 機械学習検知 `!ml`）によって誤検知（ブロック）される場合があります。
+> ブロックされた場合は、以下で解除して実行できます：
+> 1. ダウンロードした ZIP ファイルを右クリック → **「プロパティ」** → 一番下の **「セキュリティ: 許可する (Unblock)」** にチェックを入れて **[OK]** をクリック。
+> 2. または **「Windows セキュリティ」** → **「ウイルスと脅威の防止」** → **「保護の履歴」** から最新の検出項目を選び、**「操作」→「デバイスで許可」** を選択。
+
 ---
 
 ## Requirements
