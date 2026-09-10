@@ -98,12 +98,21 @@ export namespace manual {
 	
 	export class ManualStep {
 	    step_id: number;
+	    step_number?: number;
 	    title: string;
 	    instruction: string;
+	    description?: string;
+	    window_title?: string;
+	    target_element?: string;
+	    action_type?: string;
+	    input_value?: string;
 	    click_x: number;
 	    click_y: number;
+	    rel_x?: number;
+	    rel_y?: number;
 	    uws_code: string;
 	    image_path: string;
+	    audio_script?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ManualStep(source);
@@ -112,12 +121,21 @@ export namespace manual {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.step_id = source["step_id"];
+	        this.step_number = source["step_number"];
 	        this.title = source["title"];
 	        this.instruction = source["instruction"];
+	        this.description = source["description"];
+	        this.window_title = source["window_title"];
+	        this.target_element = source["target_element"];
+	        this.action_type = source["action_type"];
+	        this.input_value = source["input_value"];
 	        this.click_x = source["click_x"];
 	        this.click_y = source["click_y"];
+	        this.rel_x = source["rel_x"];
+	        this.rel_y = source["rel_y"];
 	        this.uws_code = source["uws_code"];
 	        this.image_path = source["image_path"];
+	        this.audio_script = source["audio_script"];
 	    }
 	}
 

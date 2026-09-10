@@ -18,8 +18,20 @@ export function DrawMarker(arg1, arg2, arg3) {
   return window['go']['main']['App']['DrawMarker'](arg1, arg2, arg3);
 }
 
+export function ExecuteAllSteps(arg1) {
+  return window['go']['main']['App']['ExecuteAllSteps'](arg1);
+}
+
 export function ExecuteStep(arg1) {
   return window['go']['main']['App']['ExecuteStep'](arg1);
+}
+
+export function ExportCombinedScript(arg1) {
+  return window['go']['main']['App']['ExportCombinedScript'](arg1);
+}
+
+export function ExportManualPackage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExportManualPackage'](arg1, arg2, arg3);
 }
 
 export function FetchModels(arg1) {
@@ -62,8 +74,20 @@ export function HasAPIKey(arg1) {
   return window['go']['main']['App']['HasAPIKey'](arg1);
 }
 
+export function LoadManualScenario(arg1) {
+  return window['go']['main']['App']['LoadManualScenario'](arg1);
+}
+
 export function MinimizeWindow() {
   return window['go']['main']['App']['MinimizeWindow']();
+}
+
+export function OpenDirectory(arg1) {
+  return window['go']['main']['App']['OpenDirectory'](arg1);
+}
+
+export function OpenFileInBrowser(arg1) {
+  return window['go']['main']['App']['OpenFileInBrowser'](arg1);
 }
 
 export function OpenKnowledgeDir() {
@@ -120,6 +144,10 @@ export function SaveKnowledgeDirAndURL(arg1, arg2) {
 
 export function SaveLocalLLMConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveLocalLLMConfig'](arg1, arg2);
+}
+
+export function SaveManualScenario(arg1, arg2) {
+  return window['go']['main']['App']['SaveManualScenario'](arg1, arg2);
 }
 
 export function SaveScriptFile(arg1, arg2) {

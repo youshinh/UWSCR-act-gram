@@ -11,7 +11,13 @@ export function CorrectScript(arg1:string,arg2:string,arg3:string):Promise<strin
 
 export function DrawMarker(arg1:string,arg2:number,arg3:number):Promise<string>;
 
+export function ExecuteAllSteps(arg1:string):Promise<void>;
+
 export function ExecuteStep(arg1:number):Promise<manual.ManualStep>;
+
+export function ExportCombinedScript(arg1:string):Promise<string>;
+
+export function ExportManualPackage(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function FetchModels(arg1:string):Promise<Array<string>>;
 
@@ -33,7 +39,13 @@ export function GetLocalLLMConfig():Promise<main.LocalLLMConfig>;
 
 export function HasAPIKey(arg1:string):Promise<boolean>;
 
+export function LoadManualScenario(arg1:string):Promise<Array<manual.ManualStep>>;
+
 export function MinimizeWindow():Promise<void>;
+
+export function OpenDirectory(arg1:string):Promise<void>;
+
+export function OpenFileInBrowser(arg1:string):Promise<void>;
 
 export function OpenKnowledgeDir():Promise<void>;
 
@@ -62,6 +74,8 @@ export function SaveErrorReflection(arg1:string,arg2:string):Promise<void>;
 export function SaveKnowledgeDirAndURL(arg1:string,arg2:string):Promise<void>;
 
 export function SaveLocalLLMConfig(arg1:string,arg2:string):Promise<void>;
+
+export function SaveManualScenario(arg1:string,arg2:string):Promise<void>;
 
 export function SaveScriptFile(arg1:string,arg2:string):Promise<void>;
 

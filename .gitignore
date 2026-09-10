@@ -29,7 +29,8 @@ uwscr.exe
 docs/
 
 # 生成されたマニュアル出力（大量ファイルになるため除外）
-manual/
+manual/*
+!manual/*.go
 
 # エージェントスキル設定（ローカル環境依存）
 skills/

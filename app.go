@@ -1924,3 +1924,121 @@ func (a *App) runCrawler(baseURL string, outputDir string) error {
 	outputPath := filepath.Join(outputDir, "uwscr_reference.md")
 	return os.WriteFile(outputPath, []byte(docBuffer.String()), 0644)
 }
+
+// SaveManualScenario はマニュアル編集内容を scenario.json として保存します
+func (a *App) SaveManualScenario(logDir string, stepsJSON string) error {
+	log.Printf("[App.SaveManualScenario] Saving scenario in: %s", logDir)
+	var steps []manual.ManualStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return fmt.Errorf("ステップJSONのパースに失敗しました: %v", err)
+	}
+
+	if a.session != nil {
+		a.session.SetSteps(steps)
+	}
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("フォルダ作成に失敗しました: %v", err)
+	}
+
+	scenarioPath := filepath.Join(logDir, "scenario.json")
+	formatted, err := json.MarshalIndent(steps, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(scenarioPath, formatted, 0644)
+}
+
+// LoadManualScenario は保存された scenario.json を読み込みます
+func (a *App) LoadManualScenario(logDir string) ([]manual.ManualStep, error) {
+	scenarioPath := filepath.Join(logDir, "scenario.json")
+	data, err := os.ReadFile(scenarioPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var steps []manual.ManualStep
+	if err := json.Unmarshal(data, &steps); err != nil {
+		return nil, fmt.Errorf("scenario.json のパースに失敗しました: %v", err)
+	}
+
+	if a.session != nil {
+		a.session.SetSteps(steps)
+	}
+
+	return steps, nil
+}
+
+// ExportCombinedScript は全ステップを結合した一括自動化 UWSCR スクリプトを生成します
+func (a *App) ExportCombinedScript(stepsJSON string) (string, error) {
+	var steps []manual.ManualStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return "", fmt.Errorf("ステップJSONのパースに失敗しました: %v", err)
+	}
+
+	tempSession := manual.NewManualSession()
+	tempSession.SetSteps(steps)
+	return tempSession.BuildCombinedScript(), nil
+}
+
+// ExecuteAllSteps は全ステップを結合したスクリプトを連続実行（シミュレーション）します
+func (a *App) ExecuteAllSteps(stepsJSON string) error {
+	script, err := a.ExportCombinedScript(stepsJSON)
+	if err != nil {
+		return err
+	}
+
+	// 一時 .uws ファイルに保存して実行
+	timestamp := time.Now().Format("20060102_150405")
+	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("workflow_sim_%s.uws", timestamp))
+	if err := os.WriteFile(tempPath, []byte(script), 0644); err != nil {
+		return fmt.Errorf("一時スクリプトの作成に失敗: %v", err)
+	}
+
+	return a.orchestrator.RunScript(tempPath)
+}
+
+// ExportManualPackage は編集済みステップから最新のHTMLマニュアルパッケージを出力します
+func (a *App) ExportManualPackage(targetDir string, stepsJSON string, useTTS bool) (string, error) {
+	log.Printf("[App.ExportManualPackage] Generating manual package. targetDir=%s, useTTS=%v", targetDir, useTTS)
+	var steps []ManualStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return "", fmt.Errorf("ステップJSONのパースに失敗しました: %v", err)
+	}
+
+	if targetDir == "" {
+		targetDir = filepath.Join(a.getExecBaseDir(), "manual")
+	}
+
+	timestamp := time.Now().Format("20060102_150405")
+	manualDirName := fmt.Sprintf("manual_%s", timestamp)
+	baseDir := filepath.Join(targetDir, manualDirName)
+
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", fmt.Errorf("マニュアルフォルダ作成失敗: %v", err)
+	}
+
+	err := GenerateManual(targetDir, steps, useTTS)
+	if err != nil {
+		return "", err
+	}
+
+	return baseDir, nil
+}
+
+// OpenDirectory は指定ディレクトリをエクスプローラーで開きます
+func (a *App) OpenDirectory(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		os.MkdirAll(path, 0755)
+	}
+	cmd := exec.Command("explorer", path)
+	return cmd.Start()
+}
+
+// OpenFileInBrowser は指定ファイル（index.html等）を既定のブラウザで開きます
+func (a *App) OpenFileInBrowser(path string) error {
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	return cmd.Start()
+}
+

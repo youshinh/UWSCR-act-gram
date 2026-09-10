@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,7 +16,7 @@ import (
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Windows API constants
@@ -24,6 +26,7 @@ const (
 	WM_KEYDOWN     = 0x0100
 	WM_LBUTTONDOWN = 0x0201
 	WM_RBUTTONDOWN = 0x0204
+	WM_QUIT        = 0x0012
 )
 
 // UI Automation GUIDs
@@ -73,7 +76,7 @@ type MSG struct {
 // RecordEvent represents a structured user action
 type RecordEvent struct {
 	Timestamp int64  `json:"timestamp"` // Epoch ms
-	Type      string `json:"type"`      // "click", "keydown", "window_change"
+	Type      string `json:"type"`      // "click", "input", "key_action"
 	X         int    `json:"x,omitempty"`
 	Y         int    `json:"y,omitempty"`
 	RelX      int    `json:"rel_x,omitempty"`
@@ -82,7 +85,7 @@ type RecordEvent struct {
 	Window    string `json:"window"`
 	Control   string `json:"control,omitempty"`    // e.g. "Button", "ComboBox"
 	ControlID string `json:"control_id,omitempty"` // AutomationId
-	Value     string `json:"value,omitempty"`      // Value or state
+	Value     string `json:"value,omitempty"`      // Value, state, or typed text
 	ImagePath string `json:"image_path,omitempty"` // Screenshot path
 }
 
@@ -94,7 +97,12 @@ type Recorder struct {
 	logDir       string
 	events       []RecordEvent
 	lastWindow   string
-	prevX, prevY int // For distance calculation later
+	prevX, prevY int
+
+	// Typing aggregation buffer
+	keyBuf   strings.Builder
+	bufMu    sync.Mutex
+	lastType time.Time
 	
 	// Hook handles
 	mouseHook    uintptr
@@ -108,20 +116,24 @@ type Recorder struct {
 }
 
 var (
-	user32               = syscall.NewLazyDLL("user32.dll")
-	setWindowsHookEx     = user32.NewProc("SetWindowsHookExW")
-	callNextHookEx       = user32.NewProc("CallNextHookEx")
-	unhookWindowsHookEx  = user32.NewProc("UnhookWindowsHookEx")
-	getMessage           = user32.NewProc("GetMessageW")
-	postThreadMessage    = user32.NewProc("PostThreadMessageW")
-	getForegroundWindow  = user32.NewProc("GetForegroundWindow")
-	getWindowText        = user32.NewProc("GetWindowTextW")
-	getWindowRect        = user32.NewProc("GetWindowRect")
-	getCurrentThreadId   = kernel32.NewProc("GetCurrentThreadId")
-	kernel32             = syscall.NewLazyDLL("kernel32.dll")
+	user32                     = syscall.NewLazyDLL("user32.dll")
+	setWindowsHookEx           = user32.NewProc("SetWindowsHookExW")
+	callNextHookEx             = user32.NewProc("CallNextHookEx")
+	unhookWindowsHookEx        = user32.NewProc("UnhookWindowsHookEx")
+	getMessage                 = user32.NewProc("GetMessageW")
+	translateMessage           = user32.NewProc("TranslateMessage")
+	dispatchMessage            = user32.NewProc("DispatchMessageW")
+	postThreadMessage          = user32.NewProc("PostThreadMessageW")
+	getForegroundWindow        = user32.NewProc("GetForegroundWindow")
+	getWindowText              = user32.NewProc("GetWindowTextW")
+	getWindowRect              = user32.NewProc("GetWindowRect")
+	getWindowThreadProcessId   = user32.NewProc("GetWindowThreadProcessId")
+	getCurrentThreadId         = kernel32.NewProc("GetCurrentThreadId")
+	kernel32                   = syscall.NewLazyDLL("kernel32.dll")
 
 	// Global recorder instance pointer for callback access
 	globalRecorder *Recorder
+	globalMu       sync.RWMutex
 )
 
 func NewRecorder(ctx context.Context, logDir string) *Recorder {
@@ -129,7 +141,7 @@ func NewRecorder(ctx context.Context, logDir string) *Recorder {
 		ctx:         ctx,
 		logDir:      logDir,
 		events:      make([]RecordEvent, 0),
-		captureChan: make(chan RecordEvent, 100),
+		captureChan: make(chan RecordEvent, 200),
 		quitChan:    make(chan struct{}),
 	}
 }
@@ -142,7 +154,9 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 		return fmt.Errorf("すでに記録中です。")
 	}
 	r.isRecording = true
+	globalMu.Lock()
 	globalRecorder = r
+	globalMu.Unlock()
 	r.mu.Unlock()
 
 	// Ensure directories exist
@@ -152,11 +166,11 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 	r.wg.Add(1)
 	go r.worker(captureFunc)
 
-	// Start Windows message loop on a dedicated OS thread
+	// Start Windows message loop on a dedicated, locked OS thread
 	errChan := make(chan error, 1)
 	go func() {
-		runtimeLockOSThread()
-		defer runtimeUnlockOSThread()
+		goruntime.LockOSThread()
+		defer goruntime.UnlockOSThread()
 
 		r.hookThreadId = getThreadId()
 
@@ -171,6 +185,7 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 		r.mouseHook = setHook(WH_MOUSE_LL, syscall.NewCallback(mouseCallback))
 		if r.mouseHook == 0 {
 			unhookWindowsHookEx.Call(r.kbdHook)
+			r.kbdHook = 0
 			errChan <- fmt.Errorf("マウスフックの作成に失敗しました。")
 			return
 		}
@@ -184,11 +199,19 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 			if int32(ret) <= 0 {
 				break
 			}
+			translateMessage.Call(uintptr(unsafe.Pointer(&msg)))
+			dispatchMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		}
 
 		// Cleanup hooks
-		unhookWindowsHookEx.Call(r.kbdHook)
-		unhookWindowsHookEx.Call(r.mouseHook)
+		if r.kbdHook != 0 {
+			unhookWindowsHookEx.Call(r.kbdHook)
+			r.kbdHook = 0
+		}
+		if r.mouseHook != 0 {
+			unhookWindowsHookEx.Call(r.mouseHook)
+			r.mouseHook = 0
+		}
 	}()
 
 	err := <-errChan
@@ -196,6 +219,9 @@ func (r *Recorder) Start(captureFunc func(string) error) error {
 		r.mu.Lock()
 		r.isRecording = false
 		r.mu.Unlock()
+		globalMu.Lock()
+		globalRecorder = nil
+		globalMu.Unlock()
 		return err
 	}
 
@@ -213,14 +239,21 @@ func (r *Recorder) Stop() (string, error) {
 	r.isRecording = false
 	r.mu.Unlock()
 
+	// Flush any pending typing buffer
+	r.flushKeyBuffer()
+
 	// Post WM_QUIT to hook thread message queue
 	if r.hookThreadId != 0 {
-		postThreadMessage.Call(uintptr(r.hookThreadId), 0x0012, 0, 0) // WM_QUIT = 0x0012
+		postThreadMessage.Call(uintptr(r.hookThreadId), WM_QUIT, 0, 0)
 	}
 
 	// Close worker
 	close(r.quitChan)
 	r.wg.Wait()
+
+	globalMu.Lock()
+	globalRecorder = nil
+	globalMu.Unlock()
 
 	// Save final log.json
 	logPath := filepath.Join(r.logDir, "log.json")
@@ -238,18 +271,10 @@ func (r *Recorder) Stop() (string, error) {
 
 	// Emit notification to Svelte frontend
 	if r.ctx != nil {
-		runtime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
+		wailsRuntime.EventsEmit(r.ctx, "recording_stopped", r.logDir)
 	}
 
 	return r.logDir, nil
-}
-
-// OS Thread helper locks
-func runtimeLockOSThread() {
-	syscall.ForkLock.Lock()
-}
-func runtimeUnlockOSThread() {
-	syscall.ForkLock.Unlock()
 }
 
 func getThreadId() uint32 {
@@ -263,50 +288,133 @@ func setHook(hookId int, callback uintptr) uintptr {
 }
 
 // Low-Level Callbacks
-func keyboardCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
-	if code >= 0 && wparam == WM_KEYDOWN {
-		kbd := (*KBDLLHOOKSTRUCT)(unsafe.Pointer(lparam))
-		
+func keyboardCallback(code int32, wparam uintptr, kbd *KBDLLHOOKSTRUCT) uintptr {
+	if code >= 0 && wparam == WM_KEYDOWN && kbd != nil {
 		// If F8 was pressed, stop recording
 		if kbd.VkCode == 0x77 { // VK_F8 = 0x77
 			log.Println("[Recorder] F8 detected. Stopping recording...")
 			go func() {
-				globalRecorder.Stop()
+				globalMu.RLock()
+				rec := globalRecorder
+				globalMu.RUnlock()
+				if rec != nil {
+					rec.Stop()
+				}
 			}()
 			return 1 // Block event propagation
 		}
 
-		keyName := getVkKeyName(kbd.VkCode)
-		if keyName != "" {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "keydown",
-				Key:  keyName,
-			})
+		globalMu.RLock()
+		rec := globalRecorder
+		globalMu.RUnlock()
+
+		if rec != nil {
+			// 自アプリウィンドウでのキー入力は無視
+			hwnd, _, _ := getForegroundWindow.Call()
+			if !isOwnWindow(hwnd) {
+				rec.handleKeyDown(kbd.VkCode)
+			}
 		}
 	}
-	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
+	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, uintptr(unsafe.Pointer(kbd)))
 	return ret
 }
 
-func mouseCallback(code int32, wparam uintptr, lparam uintptr) uintptr {
-	if code >= 0 {
-		mouse := (*MSLLHOOKSTRUCT)(unsafe.Pointer(lparam))
+func mouseCallback(code int32, wparam uintptr, mouse *MSLLHOOKSTRUCT) uintptr {
+	if code >= 0 && mouse != nil {
 		if wparam == WM_LBUTTONDOWN {
-			globalRecorder.pushEvent(RecordEvent{
-				Type: "click",
-				X:    int(mouse.Pt.X),
-				Y:    int(mouse.Pt.Y),
-			})
+			globalMu.RLock()
+			rec := globalRecorder
+			globalMu.RUnlock()
+
+			if rec != nil {
+				// 自アプリ（actgram本体やミニウィンドウ）のクリックは除外
+				hwnd, _, _ := getForegroundWindow.Call()
+				if !isOwnWindow(hwnd) {
+					// 直前の文字入力を確定
+					rec.flushKeyBuffer()
+
+					rec.pushEvent(RecordEvent{
+						Type: "click",
+						X:    int(mouse.Pt.X),
+						Y:    int(mouse.Pt.Y),
+					})
+				}
+			}
 		}
 	}
-	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
+	ret, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, uintptr(unsafe.Pointer(mouse)))
 	return ret
+}
+
+func isOwnWindow(hwnd uintptr) bool {
+	if hwnd == 0 {
+		return false
+	}
+	var pid uint32
+	getWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	return pid == uint32(os.Getpid())
+}
+
+func (r *Recorder) handleKeyDown(vk uint32) {
+	keyName := getVkKeyName(vk)
+	if keyName == "" {
+		return
+	}
+
+	// 特殊キー（Enter, Tab, Esc等）はバッファを確定して単独アクション発行
+	if vk == 0x0D || vk == 0x09 || vk == 0x1B {
+		r.flushKeyBuffer()
+		r.pushEvent(RecordEvent{
+			Type: "key_action",
+			Key:  keyName,
+		})
+		return
+	}
+
+	// Backspace
+	if vk == 0x08 {
+		r.bufMu.Lock()
+		defer r.bufMu.Unlock()
+		s := r.keyBuf.String()
+		if len(s) > 0 {
+			r.keyBuf.Reset()
+			r.keyBuf.WriteString(s[:len(s)-1])
+		}
+		return
+	}
+
+	// 通常文字
+	r.bufMu.Lock()
+	r.keyBuf.WriteString(keyName)
+	r.lastType = time.Now()
+	r.bufMu.Unlock()
+}
+
+func (r *Recorder) flushKeyBuffer() {
+	r.bufMu.Lock()
+	defer r.bufMu.Unlock()
+	if r.keyBuf.Len() > 0 {
+		text := r.keyBuf.String()
+		r.keyBuf.Reset()
+		r.pushEvent(RecordEvent{
+			Type:  "input",
+			Value: text,
+		})
+	}
 }
 
 func (r *Recorder) pushEvent(ev RecordEvent) {
+	r.mu.Lock()
+	if !r.isRecording {
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+
 	ev.Timestamp = time.Now().UnixNano() / int64(time.Millisecond)
 	ev.Window = getActiveWindowTitle()
-	
+
 	if ev.Type == "click" {
 		hwnd, _, _ := getForegroundWindow.Call()
 		if hwnd != 0 {
@@ -319,14 +427,11 @@ func (r *Recorder) pushEvent(ev RecordEvent) {
 		}
 	}
 
-	r.mu.Lock()
-	if !r.isRecording {
-		r.mu.Unlock()
-		return
+	select {
+	case r.captureChan <- ev:
+	default:
+		log.Println("[Recorder] Warning: capture queue full, dropped event")
 	}
-	r.mu.Unlock()
-
-	r.captureChan <- ev
 }
 
 // Background Worker processes captures and UIA scans
@@ -343,7 +448,7 @@ func (r *Recorder) worker(captureFunc func(string) error) {
 				ev.ControlID = cid
 				ev.Value = val
 
-				// 2. Automated capture on click
+				// 2. Automated clean capture on click (非破壊: 画像に直接マーカーは書き込まない)
 				imgFileName := fmt.Sprintf("event_%d.png", ev.Timestamp)
 				relPath := filepath.Join("captures", imgFileName)
 				absPath := filepath.Join(r.logDir, relPath)
@@ -351,14 +456,9 @@ func (r *Recorder) worker(captureFunc func(string) error) {
 				err := captureFunc(absPath)
 				if err == nil {
 					ev.ImagePath = relPath
-					var px, py int
 					r.mu.Lock()
-					px, py = r.prevX, r.prevY
 					r.prevX, r.prevY = ev.X, ev.Y
 					r.mu.Unlock()
-
-					// Let marker draw Guidelines and Step-to-Step measurements
-					DrawMeasurementMarker(absPath, absPath, ev.X, ev.Y, px, py)
 				} else {
 					log.Printf("[Recorder Worker] Screen capture failed: %v", err)
 				}

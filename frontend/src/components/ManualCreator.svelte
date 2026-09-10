@@ -6,43 +6,27 @@
   const App = window.go.main.App;
   const dispatch = createEventDispatcher();
 
-  let currentStep = 0;
-  let steps = []; // Goの slicer からフェッチされるステップ
   export let selectedLogDir = ""; // 操作ログディレクトリのパス
+
+  let currentStep = 0;
+  let steps = []; // ステップ一覧
   let isGenerating = false;
   let isExecuting = false;
+  let isExecutingAll = false;
+  let isSaving = false;
+  let isExporting = false;
   let isTTSPlaying = false;
   let userQuestion = "";
   let chatHistory = [];
-
-  function handleExportToDev() {
-    if (steps.length === 0) {
-      alert("エクスポートする手順がありません。まずは手順を自動生成してください。");
-      return;
-    }
-    dispatch('exportToDev', steps);
-  }
-
-  function clearChat() {
-    chatHistory = [];
-    userQuestion = "";
-  }
-
-  async function openRAGFolder() {
-    try {
-      await App.OpenKnowledgeDir();
-    } catch (err) {
-      alert("知識フォルダを開けませんでした: " + err);
-    }
-  }
+  let statusMessage = "";
 
   let activeStepBase64 = "";
   let imageLoadError = false;
-
   let lastProcessedDir = "";
+
   $: if (selectedLogDir && selectedLogDir !== lastProcessedDir) {
     lastProcessedDir = selectedLogDir;
-    handleAutoGenerate();
+    loadOrGenerate();
   }
 
   // アクティブステップの切り替え監視
@@ -71,8 +55,22 @@
     }
   }
 
-  // オートズーム用座標スタイル (ズーム無効化で全体表示)
-  $: zoomStyle = 'transform: scale(1) translate(0, 0);';
+  async function loadOrGenerate() {
+    if (!selectedLogDir) return;
+    try {
+      // 1. まず保存済みの scenario.json があるか確認
+      const savedSteps = await App.LoadManualScenario(selectedLogDir);
+      if (savedSteps && savedSteps.length > 0) {
+        steps = savedSteps;
+        currentStep = 0;
+        showStatus("保存済みシナリオを読み込みました");
+        return;
+      }
+    } catch (e) {
+      // 未保存の場合は自動生成を実行
+    }
+    handleAutoGenerate();
+  }
 
   // AI自動スライス呼び出し
   async function handleAutoGenerate() {
@@ -84,11 +82,11 @@
     isGenerating = true;
     chatHistory = [];
     try {
-      // Wailsバインド経由で自動スライス実行
       const result = await App.GenerateScenarioFromLog(selectedLogDir);
       if (result && result.length > 0) {
         steps = result;
         currentStep = 0;
+        showStatus("操作ログからシナリオを自動生成しました");
       } else {
         alert("操作ログから有効なステップを検出できませんでした。");
       }
@@ -112,15 +110,32 @@
     }
   }
 
-  // ★新設：次のステップへ進むだけの関数
-  async function handleExecuteStepOnly() {
-    if (isExecuting) return;
-    isExecuting = true;
+  // シナリオの保存
+  async function handleSaveScenario() {
+    if (!selectedLogDir || steps.length === 0) {
+      alert("保存するステップまたはログフォルダが指定されていません。");
+      return;
+    }
+    isSaving = true;
+    try {
+      await App.SaveManualScenario(selectedLogDir, JSON.stringify(steps));
+      showStatus("シナリオを保存しました！ (scenario.json)");
+    } catch (err) {
+      console.error("シナリオ保存エラー:", err);
+      alert("保存に失敗しました: " + (err.message || err));
+    } finally {
+      isSaving = false;
+    }
+  }
 
+  // ステップ単体のテスト実行
+  async function handleExecuteStepOnly() {
+    if (isExecuting || !activeStep) return;
+    isExecuting = true;
     try {
       const result = await App.ExecuteStep(currentStep);
       if (result) {
-        alert("ステップの実行が完了しました。");
+        showStatus(`ステップ ${currentStep + 1} のテスト実行が完了しました。`);
       }
     } catch (err) {
       console.error("ステップ実行エラー: ", err);
@@ -130,14 +145,173 @@
     }
   }
 
-  // ★新設：次のステップへ進むだけの関数（重複を排除した正しい定義）
-  function handleNextStep() {
-    if (currentStep < steps.length - 1) {
-      currentStep++;
+  // 全ステップの一括自動実行（シミュレーション）
+  async function handleExecuteAll() {
+    if (isExecutingAll || steps.length === 0) return;
+    if (!confirm(`全 ${steps.length} ステップを一連の自動化フローとして連続実行しますか？`)) return;
+
+    isExecutingAll = true;
+    try {
+      await App.ExecuteAllSteps(JSON.stringify(steps));
+      showStatus("全ステップの自動実行を開始しました。コンソールで進捗を確認できます。");
+    } catch (err) {
+      console.error("一括実行エラー:", err);
+      alert("一括実行に失敗しました: " + (err.message || err));
+    } finally {
+      isExecutingAll = false;
     }
   }
 
-  // 現場コパイロットへの質問
+  // HTMLマニュアルパッケージのエクスポート
+  async function handleExportHtml() {
+    if (isExporting || steps.length === 0) return;
+    isExporting = true;
+    try {
+      const outDir = await App.ExportManualPackage("", JSON.stringify(steps), false);
+      if (confirm(`HTMLマニュアルパッケージを生成しました！\n出力先: ${outDir}\n\n今すぐブラウザで開きますか？`)) {
+        await App.OpenFileInBrowser(`${outDir}\\index.html`);
+      }
+    } catch (err) {
+      console.error("HTML出力エラー:", err);
+      alert("HTMLパッケージ出力に失敗しました: " + (err.message || err));
+    } finally {
+      isExporting = false;
+    }
+  }
+
+  // 統合UWSCRスクリプトのクリップボードコピー
+  async function handleCopyCombinedScript() {
+    if (steps.length === 0) return;
+    try {
+      const script = await App.ExportCombinedScript(JSON.stringify(steps));
+      await navigator.clipboard.writeText(script);
+      showStatus("全ステップを結合したUWSCRスクリプトをコピーしました！");
+    } catch (err) {
+      console.error("スクリプトコピーエラー:", err);
+      alert("コピーに失敗しました: " + (err.message || err));
+    }
+  }
+
+  // スクリプト開発（DEVELOP）タブへ引き継ぎ
+  function handleExportToDev() {
+    if (steps.length === 0) {
+      alert("エクスポートする手順がありません。");
+      return;
+    }
+    dispatch('exportToDev', steps);
+  }
+
+  // 画像クリックによるマーカー座標の直感的修正＆UWSCRコード連動
+  function handleImageClick(e) {
+    if (!activeStep) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickXInElement = e.clientX - rect.left;
+    const clickYInElement = e.clientY - rect.top;
+
+    const imgElem = e.currentTarget;
+    const naturalW = imgElem.naturalWidth || 1920;
+    const naturalH = imgElem.naturalHeight || 1080;
+
+    const actualX = Math.round((clickXInElement / rect.width) * naturalW);
+    const actualY = Math.round((clickYInElement / rect.height) * naturalH);
+
+    activeStep.click_x = actualX;
+    activeStep.click_y = actualY;
+
+    if (activeStep.rel_x && activeStep.rel_y) {
+      activeStep.rel_x = actualX;
+      activeStep.rel_y = actualY;
+    }
+
+    if (activeStep.uws_code) {
+      const btnRegex = /(btn\s*\(\s*LEFT\s*,\s*CLICK\s*,\s*)\d+(\s*,\s*)\d+/i;
+      if (btnRegex.test(activeStep.uws_code)) {
+        activeStep.uws_code = activeStep.uws_code.replace(btnRegex, `$1${actualX}$2${actualY}`);
+      }
+    }
+
+    steps = [...steps];
+    showStatus(`マーカー座標を (${actualX}, ${actualY}) に更新しました`);
+  }
+
+  // ステップの追加
+  function handleAddStep() {
+    const newStepNum = steps.length + 1;
+    const newStep = {
+      step_id: newStepNum,
+      step_number: newStepNum,
+      title: `ステップ ${newStepNum}: 新規手順`,
+      instruction: "操作内容を具体的に記述してください。",
+      description: "操作内容を具体的に記述してください。",
+      window_title: activeStep ? activeStep.window_title : "",
+      target_element: "操作対象要素",
+      action_type: "click",
+      click_x: 100,
+      click_y: 100,
+      uws_code: `// ステップ ${newStepNum} 自動制御コード\n`,
+      image_path: activeStep ? activeStep.image_path : ""
+    };
+    steps = [...steps, newStep];
+    currentStep = steps.length - 1;
+    showStatus("新規ステップを追加しました");
+  }
+
+  // ステップの削除
+  function handleDeleteStep(idx) {
+    if (steps.length <= 1) {
+      alert("これ以上ステップを削除できません。");
+      return;
+    }
+    if (!confirm(`ステップ ${idx + 1} を削除してもよろしいですか？`)) return;
+
+    steps.splice(idx, 1);
+    steps.forEach((s, i) => {
+      s.step_id = i + 1;
+      s.step_number = i + 1;
+    });
+    if (currentStep >= steps.length) {
+      currentStep = steps.length - 1;
+    }
+    steps = [...steps];
+    showStatus(`ステップ ${idx + 1} を削除しました`);
+  }
+
+  // ステップの上移動
+  function handleMoveUp(idx) {
+    if (idx <= 0) return;
+    const temp = steps[idx];
+    steps[idx] = steps[idx - 1];
+    steps[idx - 1] = temp;
+    steps.forEach((s, i) => {
+      s.step_id = i + 1;
+      s.step_number = i + 1;
+    });
+    currentStep = idx - 1;
+    steps = [...steps];
+  }
+
+  // ステップの下移動
+  function handleMoveDown(idx) {
+    if (idx >= steps.length - 1) return;
+    const temp = steps[idx];
+    steps[idx] = steps[idx + 1];
+    steps[idx + 1] = temp;
+    steps.forEach((s, i) => {
+      s.step_id = i + 1;
+      s.step_number = i + 1;
+    });
+    currentStep = idx + 1;
+    steps = [...steps];
+  }
+
+  function showStatus(msg) {
+    statusMessage = msg;
+    setTimeout(() => {
+      if (statusMessage === msg) statusMessage = "";
+    }, 3500);
+  }
+
+  // 現場コパイロット (AIチャット)
   async function askAI() {
     if (!userQuestion.trim()) return;
     const q = userQuestion;
@@ -152,7 +326,19 @@
     }
   }
 
-  // Web Speech API による音声読み上げ (TTS)
+  function clearChat() {
+    chatHistory = [];
+    userQuestion = "";
+  }
+
+  async function openRAGFolder() {
+    try {
+      await App.OpenKnowledgeDir();
+    } catch (err) {
+      alert("知識フォルダを開けませんでした: " + err);
+    }
+  }
+
   function playTTS(text) {
     if (!text) return;
     try {
@@ -177,218 +363,275 @@
   }
 </script>
 
-<div class="manual-creator-layout">
-<!-- 1. オート・スライサー制御パネル -->
-  <div class="control-panel card">
-    <div style="display: flex; gap: 24px; align-items: flex-start;">
-      
-      <!-- 左側：タイトルと入力エリアのメインブロック -->
-      <div style="flex: 1; display: flex; flex-direction: column; gap: 16px;">
-        <div class="header-main" style="display: flex; align-items: center; gap: 12px;">
-          <svg class="header-icon animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <polygon points="10 8 16 12 10 16 10 8"/>
-          </svg>
-          <div class="header-text">
-            <h2>シナリオ自動生成</h2>
-            <p class="description">レコーダーが保存した操作ログフォルダを指定すると、手順の分割とガイドを生成します。</p>
-          </div>
-        </div>
+<div class="manual-studio-container">
+  <!-- 1. トップアクションバー -->
+  <header class="top-action-bar card">
+    <div class="top-left">
+      <div class="header-badge">MANUAL STUDIO</div>
+      <div class="log-dir-group">
+        <input 
+          type="text" 
+          placeholder="録画ログフォルダパス (manual/recording_...)" 
+          class="path-input"
+          bind:value={selectedLogDir}
+          disabled={isGenerating}
+        />
+        <button class="btn-secondary" on:click={browseLogDir} disabled={isGenerating}>
+          📁 参照...
+        </button>
+        <button class="btn-primary" on:click={handleAutoGenerate} disabled={isGenerating || !selectedLogDir}>
+          {#if isGenerating}
+            <span class="spinner-mini"></span> AI解析中...
+          {:else}
+            ⚡ 記録から自動生成
+          {/if}
+        </button>
+      </div>
+    </div>
 
-        <div class="settings-row" style="display: flex; gap: 8px; width: 100%;">
-          <div class="input-with-btn" style="flex: 1; display: flex; gap: 8px;">
+    <div class="top-right">
+      {#if statusMessage}
+        <span class="status-toast animate-fade">{statusMessage}</span>
+      {/if}
+
+      <div class="action-btn-group">
+        <button class="btn-action" on:click={handleSaveScenario} disabled={steps.length === 0 || isSaving} title="編集内容を scenario.json に保存">
+          💾 シナリオ保存
+        </button>
+        <button class="btn-action btn-execute-all" on:click={handleExecuteAll} disabled={steps.length === 0 || isExecutingAll} title="全ステップを連続自動実行">
+          ▶ 全自動実行
+        </button>
+        <button class="btn-action" on:click={handleExportHtml} disabled={steps.length === 0 || isExporting} title="ブラウザ閲覧用HTMLマニュアルを出力">
+          📦 HTML出力
+        </button>
+        <button class="btn-action" on:click={handleCopyCombinedScript} disabled={steps.length === 0} title="全ステップ結合スクリプトをコピー">
+          📋 統合コード
+        </button>
+        <button class="btn-action btn-accent" on:click={handleExportToDev} disabled={steps.length === 0} title="DEVELOPタブで詳細スクリプト編集">
+          シナリオを編集 →
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. 3ペインメインワークスペース -->
+  <div class="main-workspace-grid">
+    <!-- 左ペイン: ステップ一覧 (リスト & 並び替え & 追加・削除) -->
+    <aside class="steps-sidebar card">
+      <div class="sidebar-header">
+        <div class="sidebar-title">
+          <span>手順リスト</span>
+          <span class="step-count">{steps.length} 件</span>
+        </div>
+        <button class="btn-add-step" on:click={handleAddStep} title="新しいステップを末尾に追加">
+          ＋ 追加
+        </button>
+      </div>
+
+      <div class="steps-scroll-list">
+        {#if steps.length === 0}
+          <div class="empty-steps">
+            <p>手順がありません。<br>上の「記録から自動生成」を実行してください。</p>
+          </div>
+        {:else}
+          {#each steps as s, idx}
+            <div 
+              class="step-item-card"
+              class:active={currentStep === idx}
+              on:click={() => currentStep = idx}
+            >
+              <div class="step-item-left">
+                <span class="step-num-badge">{idx + 1}</span>
+              </div>
+              <div class="step-item-center">
+                <div class="step-item-title">{s.title || `ステップ ${idx + 1}`}</div>
+                <div class="step-item-sub">
+                  {#if s.window_title}
+                    <span class="sub-tag">🪟 {s.window_title.substring(0, 14)}...</span>
+                  {/if}
+                  {#if s.target_element}
+                    <span class="sub-tag elem-tag">🎯 {s.target_element}</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="step-item-right" on:click|stopPropagation>
+                <div class="reorder-group">
+                  <button class="btn-order" on:click={() => handleMoveUp(idx)} disabled={idx === 0} title="上へ移動">▲</button>
+                  <button class="btn-order" on:click={() => handleMoveDown(idx)} disabled={idx === steps.length - 1} title="下へ移動">▼</button>
+                </div>
+                <button class="btn-delete" on:click={() => handleDeleteStep(idx)} title="このステップを削除">🗑️</button>
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </aside>
+
+    <!-- 中央ペイン: ステップエディタ ＆ インタラクティブ画像プレビュー -->
+    <section class="step-editor-panel card">
+      {#if activeStep}
+        <div class="editor-header-bar">
+          <div class="step-identity">
+            <span class="step-tag">STEP {currentStep + 1} / {steps.length}</span>
             <input 
               type="text" 
-              placeholder="記録ログフォルダパス" 
-              class="path-input"
-              bind:value={selectedLogDir}
-              disabled={isGenerating}
+              class="step-title-input" 
+              bind:value={activeStep.title} 
+              placeholder="ステップタイトル（例: 基幹システムへのログイン）"
             />
-            <button class="btn-browse" on:click={browseLogDir} disabled={isGenerating}>
-              参照...
+          </div>
+          <div class="editor-header-actions">
+            {#if isTTSPlaying}
+              <button class="btn-tts stop" on:click={stopTTS}>🔊 音声停止</button>
+            {:else}
+              <button class="btn-tts" on:click={() => playTTS(activeStep.instruction || activeStep.description)}>
+                ▶ 音声案内
+              </button>
+            {/if}
+            <button class="btn-test-step" on:click={handleExecuteStepOnly} disabled={isExecuting}>
+              {#if isExecuting}
+                <span class="spinner-mini"></span> 実行中...
+              {:else}
+                ▶ このステップをテスト再生
+              {/if}
             </button>
           </div>
         </div>
-      </div>
 
-      <!-- 右側：幅を統一したボタン専用カラム -->
-      <div style="display: flex; flex-direction: column; gap: 12px; min-width: 180px;">
-        <!-- シナリオを編集ボタン -->
-        {#if steps.length > 0}
-          <button class="gradient-btn" on:click={handleExportToDev} style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
-              <polyline points="16 18 22 12 16 6"/>
-              <polyline points="8 6 2 12 8 18"/>
-            </svg>
-            シナリオを編集
-          </button>
-        {:else}
-          <!-- ボタンがない時も高さを確保してレイアウトを維持 -->
-          <div style="height: 42px;"></div>
-        {/if}
-
-        <!-- 記録から自動生成ボタン -->
-        <button 
-          class="btn-generate gradient-btn"
-          on:click={handleAutoGenerate}
-          disabled={isGenerating}
-          style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px;"
-        >
-          {#if isGenerating}
-            <span class="spinner-mini"></span> 解析中...
-          {:else}
-            記録から自動生成
-          {/if}
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 2. メイン並走ビューワー & AIチャット -->
-  <div class="main-viewer-grid">
-    <!-- 左：オートズームプレビュー -->
-    <div class="preview-panel card">
-      {#if activeStep}
-        <div class="viewport">
-          {#if activeStepBase64}
-            <img 
-              src={activeStepBase64} 
-              alt="操作箇所のプレビュー" 
-              class="viewport-img transition-transform duration-700 ease-out"
-              style="{zoomStyle} cursor: zoom-in;"
-              on:click={() => window.dispatchEvent(new CustomEvent('zoom-image', { detail: activeStepBase64 }))}
-            />
-          {:else if imageLoadError}
-            <div class="empty-viewport">
-              <span class="empty-icon" style="font-size: 2rem; margin-bottom: 8px;">📷</span>
-              <p>プレビュー画像はありません</p>
-            </div>
-          {:else}
-            <div class="empty-viewport">
-              <span class="spinner"></span>
-              <p>画像を読込中...</p>
-            </div>
-          {/if}
-          
-          {#if activeStep.click_x > 0}
-            <div 
-              class="pulse-ring"
-              class:pulsing={isTTSPlaying}
-              style="left: {(activeStep.click_x / 1920) * 100}%; top: {(activeStep.click_y / 1080) * 100}%;"
-            ></div>
-          {/if}
-        </div>
-
-        <div class="step-info-bar">
-          <div class="info-content">
-            <div class="badge-row">
-              <span class="step-badge">ステップ {currentStep + 1}</span>
-              {#if isTTSPlaying}
-                <button class="tts-stop-btn" on:click={stopTTS}>🔊 音声を停止</button>
-              {:else}
-                <button class="tts-play-btn" on:click={() => playTTS(activeStep.instruction)} style="background: var(--accent-soft); border: 1px solid var(--border-color); color: var(--accent-color); font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: background-color 0.2s;">
-                  ▶ 音声を再生
-                </button>
-              {/if}
-            </div>
-            <h3 class="step-title">{activeStep.title}</h3>
-            <p class="step-desc">{activeStep.instruction}</p>
+        <div class="editor-content-split">
+          <!-- 上段: プレビュー画像 & インタラクティブマーカー -->
+          <div class="preview-viewport-box">
+            {#if activeStepBase64}
+              <div class="image-wrapper">
+                <img 
+                  src={activeStepBase64} 
+                  alt="ステッププレビュー" 
+                  class="preview-image"
+                  on:click={handleImageClick}
+                  title="クリックした位置に赤丸マーカーを移動します"
+                />
+                {#if activeStep.click_x > 0 && activeStep.click_y > 0}
+                  <div 
+                    class="interactive-marker pulse-ring"
+                    style="left: {(activeStep.click_x / 1920) * 100}%; top: {(activeStep.click_y / 1080) * 100}%;"
+                    title={`クリック位置: (${activeStep.click_x}, ${activeStep.click_y})`}
+                  ></div>
+                {/if}
+              </div>
+              <div class="viewport-tip-bar">
+                <span>💡 画像上の操作箇所を直接クリックすると、マーカー座標と自動制御コードが自動連動して修正されます</span>
+                <span class="coord-label">座標: X={activeStep.click_x}, Y={activeStep.click_y}</span>
+              </div>
+            {:else if imageLoadError}
+              <div class="empty-preview">
+                <span class="empty-icon">📷</span>
+                <p>キャプチャ画像がありません</p>
+              </div>
+            {:else}
+              <div class="empty-preview">
+                <span class="spinner"></span>
+                <p>画像を読込中...</p>
+              </div>
+            {/if}
           </div>
-          <div class="code-preview">
-            <label class="code-label">自動生成された UWSCRスクリプト</label>
-            <textarea 
-              class="code-textarea"
-              bind:value={activeStep.uws_code}
-              placeholder="// UWSCRスクリプトがここに表示されます"
-            ></textarea>
+
+          <!-- 下段: 手順指示・メタデータ・自動制御スクリプト編集 -->
+          <div class="editor-form-box">
+            <div class="form-row-grid">
+              <div class="form-field">
+                <label>対象ウィンドウ名</label>
+                <input 
+                  type="text" 
+                  class="form-input" 
+                  bind:value={activeStep.window_title} 
+                  placeholder="例: 基幹業務システム"
+                />
+              </div>
+              <div class="form-field">
+                <label>操作対象要素</label>
+                <input 
+                  type="text" 
+                  class="form-input" 
+                  bind:value={activeStep.target_element} 
+                  placeholder="例: ログインボタン, ユーザーID入力欄"
+                />
+              </div>
+              <div class="form-field-coord">
+                <label>操作座標 (X, Y)</label>
+                <div class="coord-inputs">
+                  <input type="number" class="coord-input" bind:value={activeStep.click_x} />
+                  <input type="number" class="coord-input" bind:value={activeStep.click_y} />
+                </div>
+              </div>
+            </div>
+
+            <div class="form-field full-width">
+              <label>作業手順・操作説明 (操作者が迷わない指示)</label>
+              <textarea 
+                class="form-textarea desc-textarea" 
+                bind:value={activeStep.instruction}
+                placeholder="誰が見てもわかる具体的な作業手順を記述してください。"
+                rows="2"
+              ></textarea>
+            </div>
+
+            <div class="form-field full-width">
+              <div class="code-label-row">
+                <label>自動制御スクリプト (UWSCR)</label>
+                <span class="code-hint">※ステップ実行時および統合エクスポート時に自動実行されます</span>
+              </div>
+              <textarea 
+                class="form-textarea code-textarea font-mono" 
+                bind:value={activeStep.uws_code}
+                placeholder="// UWSCRスクリプトを記述"
+                rows="4"
+              ></textarea>
+            </div>
           </div>
         </div>
       {:else}
-        <div class="empty-state">
-          <img src={appIcon} alt="App Icon" style="width: 54px; height: 54px; margin-bottom: 12px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3)); object-fit: contain;" />
-          <h3>記録データがロードされていません</h3>
-          <p>記録ログディレクトリを指定して、上の「記録から自動生成」を実行してください。</p>
+        <div class="empty-editor">
+          <img src={appIcon} alt="App Icon" class="empty-app-icon" />
+          <h3>ステップが選択されていません</h3>
+          <p>左側のリストから編集したいステップを選択するか、記録ログから自動生成してください。</p>
         </div>
       {/if}
-      <!-- 下部同期コントローラー -->
-      <div class="sync-controller border-t">
-        <button 
-          class="btn-nav" 
-          disabled={currentStep === 0 || steps.length === 0}
-          on:click={() => currentStep--}
-        >
-          前へ
-        </button>
-        
-        <span class="step-progress-text">
-          ステップ進捗: {steps.length > 0 ? currentStep + 1 : 0} / {steps.length}
-        </span>
+    </section>
 
-        <div class="execute-nav-group" style="display: flex; gap: 8px;">
-          <button 
-            class="btn-execute"
-            disabled={steps.length === 0 || isExecuting}
-            on:click={handleExecuteStepOnly}
-          >
-            {#if isExecuting}
-              <span class="spinner-mini"></span> 実行中...
-            {:else}
-              ▶ このステップを再生
-            {/if}
-          </button>
-
-          <button 
-            class="btn-nav"
-            disabled={steps.length === 0 || currentStep >= steps.length - 1}
-            on:click={handleNextStep}
-          >
-            次へ
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 右：業務アシスタント (ここは既存のまま維持) -->
-    <div class="copilot-panel card">
-      <div class="copilot-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box;">
-        <div style="display: flex; align-items: center; gap: 8px;">
+    <!-- 右ペイン: 業務アシスタント (AIチャット & RAGナレッジ) -->
+    <aside class="copilot-sidebar card">
+      <div class="copilot-header">
+        <div class="copilot-title-group">
           <span class="copilot-dot"></span>
           <h3>業務アシスタント</h3>
         </div>
-        <button 
-          on:click={openRAGFolder} 
-          style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px; white-space: nowrap; margin-right: 4px;"
-          title="質問の参照ソースとなるファイルを追加します"
-        >
+        <button on:click={openRAGFolder} class="btn-knowledge" title="マニュアルや業務仕様書を追加">
           📂 知識フォルダ
         </button>
       </div>
 
-      <div class="rag-help-text" style="padding: 10px 16px; background: rgba(128, 128, 128, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.7rem; color: var(--text-secondary); line-height: 1.4;">
-        <b>業務知識の提供方法:</b> 上記の「知識フォルダ」ボタンを押し、開いたフォルダ内に業務マニュアルや仕様書のテキストファイル、画像、PDF、またはOfficeドキュメントを配置してください。
+      <div class="rag-info-banner">
+        <b>業務ナレッジ参照中:</b> 知識フォルダ内の仕様書やマニュアルに基づいてAIがアドバイスします。
       </div>
 
-      {#if chatHistory.length > 0}
-        <div style="display: flex; justify-content: flex-end; padding: 8px 16px; border-bottom: 1px solid var(--border-color);">
-          <button on:click={clearChat} style="background: transparent; border: none; color: var(--accent-color); font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;">
-            🔄 最初の質問選択に戻る
-          </button>
-        </div>
-      {/if}
-
-      <div class="chat-container">
+      <div class="chat-messages-container">
         {#if chatHistory.length === 0}
-          <div class="chat-empty">
-            <p>現在のステップや業務知識について、アシスタントに質問することができます。</p>
-            <div class="suggested-chips">
-              <button class="chip" on:click={() => { userQuestion = "現在の操作手順について教えてください。"; askAI(); }}>手順を質問</button>
-              <button class="chip" on:click={() => { userQuestion = "この画面の入力値の根拠は何ですか？"; askAI(); }}>入力の根拠を質問</button>
+          <div class="chat-welcome">
+            <p>この画面の操作手順や入力内容について、AIアシスタントにいつでも質問できます。</p>
+            <div class="quick-questions">
+              <button class="quick-btn" on:click={() => { userQuestion = "現在の操作手順の注意点を教えてください。"; askAI(); }}>
+                注意点を質問
+              </button>
+              <button class="quick-btn" on:click={() => { userQuestion = "この画面での入力値の仕様を教えてください。"; askAI(); }}>
+                入力仕様を質問
+              </button>
             </div>
           </div>
         {/if}
+
         {#each chatHistory as chat}
-          <div class="chat-bubble-wrapper {chat.role === 'user' ? 'user-align' : 'assistant-align'}">
-            <span class="chat-sender">{chat.role === 'user' ? '現場担当者' : 'アシスタント'}</span>
+          <div class="chat-bubble-row {chat.role === 'user' ? 'user-row' : 'assistant-row'}">
+            <span class="chat-role">{chat.role === 'user' ? 'あなた' : 'AI'}</span>
             <div class="chat-bubble {chat.role === 'user' ? 'user-bubble' : 'assistant-bubble'}">
               {chat.text}
             </div>
@@ -396,94 +639,75 @@
         {/each}
       </div>
 
-      <div class="chat-input-row border-t">
+      <div class="chat-input-bar">
         <input 
           type="text" 
-          placeholder="例: 伝票の数量に小数点は使える？" 
+          placeholder="業務手順や仕様について質問..." 
           class="chat-input"
           bind:value={userQuestion}
           on:keydown={(e) => e.key === 'Enter' && askAI()}
         />
-        <button class="btn-chat-send" on:click={askAI} disabled={!userQuestion.trim()}>
-          質問
+        <button class="btn-send" on:click={askAI} disabled={!userQuestion.trim()}>
+          送信
         </button>
       </div>
-    </div>
+    </aside>
   </div>
 </div>
 
 <style>
-  .manual-creator-layout {
+  .manual-studio-container {
     display: flex;
     flex-direction: column;
     height: 100%;
-    gap: 16px;
+    gap: 12px;
     box-sizing: border-box;
     overflow: hidden;
+    padding: 2px;
   }
 
   .card {
     background: var(--bg-secondary);
     backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    box-shadow: var(--shadow-md);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
   }
 
-  .control-panel {
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .panel-header {
+  /* 1. トップアクションバー */
+  .top-action-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 10px 16px;
+    gap: 16px;
+    flex-shrink: 0;
   }
 
-  .header-main {
+  .top-left {
     display: flex;
-    gap: 12px;
-    align-items: flex-start;
-  }
-
-  .header-icon {
-    width: 24px;
-    height: 24px;
-    color: var(--accent-color);
-    margin-top: 3px;
-  }
-
-  .header-text h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .description {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin: 4px 0 0 0;
-    line-height: 1.4;
-  }
-
-  .settings-row {
-    display: flex;
-    gap: 12px;
     align-items: center;
-  }
-
-  .flex-fill {
+    gap: 12px;
     flex: 1;
   }
 
-  .input-with-btn {
+  .header-badge {
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .log-dir-group {
     display: flex;
     gap: 8px;
-    width: 100%;
+    align-items: center;
+    flex: 1;
+    max-width: 580px;
   }
 
   .path-input {
@@ -491,327 +715,566 @@
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 6px 10px;
     color: var(--text-primary);
     font-size: 0.8rem;
     outline: none;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.2s;
   }
 
   .path-input:focus {
     border-color: var(--accent-color);
   }
 
-  .btn-browse {
+  .top-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .status-toast {
+    font-size: 0.75rem;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .action-btn-group {
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn-primary, .btn-secondary, .btn-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    border: 1px solid var(--accent-color);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .btn-secondary, .btn-action {
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.2s ease;
   }
 
-  .btn-browse:hover {
-    border-color: var(--border-hover);
+  .btn-secondary:hover:not(:disabled), .btn-action:hover:not(:disabled) {
     background: var(--accent-soft);
+    border-color: var(--accent-color);
   }
 
-  .gradient-btn {
-    background: var(--accent-color);
-    border: 1px solid var(--border-color);
-    color: var(--bg-primary);
+  .btn-execute-all {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #10b981;
     font-weight: 600;
-    border-radius: 6px;
-    padding: 9px 20px;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: background-color 0.2s ease, transform 0.1s ease;
-    white-space: nowrap;
   }
 
-  .gradient-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
+  .btn-execute-all:hover:not(:disabled) {
+    background: #10b981;
+    color: #fff;
   }
 
-  .gradient-btn:active:not(:disabled) {
-    transform: scale(0.97);
+  .btn-accent {
+    background: var(--accent-soft);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    font-weight: 600;
   }
 
-  .gradient-btn:disabled {
+  button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
 
-  /* Main Viewer Grid */
-  .main-viewer-grid {
+  /* 2. メイン3ペイングリッド */
+  .main-workspace-grid {
     display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 20px;
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* Left Panel */
-  .preview-panel {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .viewport {
-    flex: 1;
-    min-height: 0;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #000;
-  }
-
-  .viewport-img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-  }
-
-  .empty-viewport {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    grid-template-columns: 260px 1fr 280px;
     gap: 12px;
-    color: var(--text-secondary);
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--border-color);
-    border-top-color: var(--accent-color);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .spinner-inline {
-    display: inline-block;
-    animation: spin 1s linear infinite;
-  }
-
-  .pulse-ring {
-    position: absolute;
-    width: 60px;
-    height: 60px;
-    margin-left: -30px;
-    margin-top: -30px;
-    border: 3px solid var(--accent-red);
-    border-radius: 50%;
-    pointer-events: none;
-    box-shadow: 0 0 10px var(--accent-red-border);
-    opacity: 0;
-  }
-
-  .pulse-ring.pulsing {
-    animation: wave 1.5s infinite ease-out;
-  }
-
-  @keyframes wave {
-    0% { transform: scale(0.4); opacity: 1; }
-    100% { transform: scale(1.4); opacity: 0; }
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .step-info-bar {
-    padding: 16px;
-    background: rgba(0, 0, 0, 0.2);
-    border-top: 1px solid var(--border-color);
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-
-  .info-content {
+  /* 左ペイン: ステップ一覧 */
+  .steps-sidebar {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .badge-row {
+  .sidebar-header {
     display: flex;
-    gap: 10px;
+    justify-content: space-between;
     align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.05);
   }
 
-  .step-badge {
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
+  .sidebar-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .step-count {
+    font-size: 0.65rem;
+    background: var(--input-bg);
+    padding: 1px 6px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+  }
+
+  .btn-add-step {
+    background: transparent;
+    border: 1px dashed var(--accent-color);
     color: var(--accent-color);
     font-size: 0.7rem;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 20px;
-  }
-
-  .tts-stop-btn {
-    background: var(--accent-red-soft);
-    border: 1px solid var(--accent-red-border);
-    color: var(--accent-red);
-    font-size: 0.65rem;
     padding: 2px 8px;
     border-radius: 4px;
     cursor: pointer;
-    transition: background-color 0.2s;
   }
 
-  .tts-stop-btn:hover {
-    background: rgba(255, 71, 87, 0.2);
+  .btn-add-step:hover {
+    background: var(--accent-soft);
   }
 
-  .step-title {
-    margin: 0;
-    font-size: 0.95rem;
+  .steps-scroll-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .empty-steps {
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+
+  .step-item-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .step-item-card:hover {
+    border-color: var(--accent-color);
+  }
+
+  .step-item-card.active {
+    border-color: var(--accent-color);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent-color);
+  }
+
+  .step-num-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: var(--border-color);
+    color: var(--text-primary);
+    border-radius: 50%;
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+
+  .step-item-card.active .step-num-badge {
+    background: var(--accent-color);
+    color: var(--bg-primary);
+  }
+
+  .step-item-center {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .step-item-title {
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .step-desc {
-    margin: 0;
-    font-size: 0.8rem;
+  .step-item-sub {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+    flex-wrap: wrap;
+  }
+
+  .sub-tag {
+    font-size: 0.6rem;
     color: var(--text-secondary);
-    line-height: 1.4;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 1px 4px;
+    border-radius: 3px;
   }
 
-  .code-preview {
+  .elem-tag {
+    color: #2563eb;
+    background: rgba(37, 99, 235, 0.1);
+  }
+
+  .step-item-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .reorder-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .btn-order {
+    background: transparent;
+    border: none;
+    font-size: 0.55rem;
+    padding: 1px 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .btn-order:hover:not(:disabled) {
+    color: var(--accent-color);
+  }
+
+  .btn-delete {
+    background: transparent;
+    border: none;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 2px 4px;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+  }
+
+  .btn-delete:hover {
+    opacity: 1;
+  }
+
+  /* 中央ペイン: ステップエディタ */
+  .step-editor-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .editor-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.04);
+    gap: 12px;
+  }
+
+  .step-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+  }
+
+  .step-tag {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent-color);
+    background: var(--accent-soft);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    white-space: nowrap;
+  }
+
+  .step-title-input {
+    flex: 1;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px 8px;
+    outline: none;
+  }
+
+  .step-title-input:hover, .step-title-input:focus {
+    background: var(--input-bg);
+    border-color: var(--border-color);
+  }
+
+  .editor-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-tts {
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .btn-tts.stop {
+    color: #ef4444;
+    border-color: #ef4444;
+  }
+
+  .btn-test-step {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 5px 12px;
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .editor-content-split {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  /* 画像プレビュー & マーカー */
+  .preview-viewport-box {
+    position: relative;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    min-height: 220px;
+    max-height: 340px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .image-wrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+
+  .preview-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    user-select: none;
+  }
+
+  .interactive-marker {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    border: 3px solid #ef4444;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.8);
+  }
+
+  .pulse-ring::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    background: #ef4444;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .viewport-tip-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.85);
+    color: #e2e8f0;
+    font-size: 0.68rem;
+    padding: 4px 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .coord-label {
+    font-family: monospace;
+    color: #38bdf8;
+  }
+
+  .empty-preview, .empty-editor {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    gap: 8px;
+    text-align: center;
+  }
+
+  .empty-app-icon {
+    width: 48px;
+    height: 48px;
+    opacity: 0.6;
+  }
+
+  /* 下段フォーム */
+  .editor-form-box {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .form-row-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 140px;
+    gap: 10px;
+  }
+
+  .form-field {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
 
-  .code-label {
-    font-size: 0.65rem;
-    color: var(--text-secondary);
+  .form-field label, .code-label-row label {
+    font-size: 0.7rem;
     font-weight: 600;
-    text-transform: uppercase;
+    color: var(--text-secondary);
   }
 
-  .code-textarea {
-    flex: 1;
+  .form-input {
     background: var(--input-bg);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 8px;
-    font-family: Consolas, monospace;
+    border-radius: 5px;
+    padding: 5px 8px;
     font-size: 0.75rem;
     color: var(--text-primary);
-    resize: none;
     outline: none;
-    min-height: 70px;
   }
 
-  .empty-state {
-    flex: 1;
+  .form-input:focus, .form-textarea:focus {
+    border-color: var(--accent-color);
+  }
+
+  .form-field-coord {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    gap: 4px;
+  }
+
+  .form-field-coord label {
+    font-size: 0.7rem;
+    font-weight: 600;
     color: var(--text-secondary);
-    padding: 40px;
-    text-align: center;
   }
 
-  .empty-icon {
-    font-size: 2.5rem;
-    margin-bottom: 12px;
+  .coord-inputs {
+    display: flex;
+    gap: 4px;
   }
 
-  .empty-state h3 {
-    margin: 0 0 6px 0;
-    font-size: 1rem;
-    color: var(--text-primary);
-  }
-
-  .empty-state p {
-    margin: 0;
+  .coord-input {
+    width: 60px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 5px 4px;
     font-size: 0.75rem;
-    max-width: 300px;
+    color: var(--text-primary);
+    text-align: center;
+    outline: none;
+  }
+
+  .form-textarea {
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    outline: none;
+    resize: vertical;
     line-height: 1.4;
   }
 
-  .sync-controller {
-    padding: 12px 20px;
+  .code-label-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(0, 0, 0, 0.1);
   }
 
-  .border-t {
-    border-top: 1px solid var(--border-color);
-  }
-
-  .btn-nav {
-    background: var(--input-bg);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    border-radius: 6px;
-    padding: 6px 16px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-nav:hover:not(:disabled) {
-    border-color: var(--border-hover);
-    background: var(--accent-soft);
-  }
-
-  .btn-nav:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .step-progress-text {
-    font-size: 0.75rem;
+  .code-hint {
+    font-size: 0.65rem;
     color: var(--text-secondary);
-    font-weight: 500;
   }
 
-  .btn-execute {
-    background: var(--accent-color);
-    border: 1px solid var(--border-color);
-    color: var(--bg-primary);
-    font-weight: 600;
-    border-radius: 20px;
-    padding: 7px 20px;
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: background-color 0.2s ease, transform 0.1s ease;
+  .code-textarea {
+    font-family: 'Consolas', monospace;
+    background: #1e1e1e;
+    color: #9cdcfe;
+    border-color: #333;
   }
 
-  .btn-execute:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-
-  .btn-execute:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-
-  .btn-execute:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  /* Right Copilot Panel */
-  .copilot-panel {
+  /* 右ペイン: 業務アシスタント */
+  .copilot-sidebar {
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -819,171 +1282,174 @@
   }
 
   .copilot-header {
-    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .copilot-title-group {
     display: flex;
     align-items: center;
-    gap: 8px;
-    background: rgba(0, 0, 0, 0.15);
-    border-bottom: 1px solid var(--border-color);
+    gap: 6px;
   }
 
   .copilot-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: var(--accent-color);
-    box-shadow: 0 0 8px var(--accent-color);
-    animation: flash 1.5s infinite alternate;
-  }
-
-  @keyframes flash {
-    from { opacity: 0.4; }
-    to { opacity: 1; }
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
   }
 
   .copilot-header h3 {
     margin: 0;
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--text-primary);
   }
 
-  .chat-container {
+  .btn-knowledge {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .rag-info-banner {
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.02);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    line-height: 1.3;
+  }
+
+  .chat-messages-container {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 10px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
   }
 
-  .chat-empty {
+  .chat-welcome {
     margin: auto;
     text-align: center;
+    font-size: 0.7rem;
     color: var(--text-secondary);
-    font-size: 0.75rem;
-    max-width: 240px;
-    line-height: 1.4;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .suggested-chips {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .chip {
+  .quick-questions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .quick-btn {
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 6px 12px;
-    border-radius: 12px;
-    font-size: 0.7rem;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.68rem;
     cursor: pointer;
-    transition: all 0.2s ease;
   }
 
-  .chip:hover {
+  .quick-btn:hover {
     background: var(--accent-soft);
     border-color: var(--accent-color);
   }
 
-  .chat-bubble-wrapper {
+  .chat-bubble-row {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    max-width: 85%;
+    gap: 2px;
+    max-width: 90%;
   }
 
-  .user-align {
+  .user-row {
     align-self: flex-end;
     align-items: flex-end;
   }
 
-  .assistant-align {
+  .assistant-row {
     align-self: flex-start;
     align-items: flex-start;
   }
 
-  .chat-sender {
+  .chat-role {
     font-size: 0.6rem;
     color: var(--text-secondary);
   }
 
   .chat-bubble {
-    padding: 10px 14px;
-    border-radius: 12px;
-    font-size: 0.75rem;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 0.72rem;
     line-height: 1.4;
   }
 
   .user-bubble {
     background: var(--accent-color);
     color: var(--bg-primary);
-    border-bottom-right-radius: 2px;
   }
 
   .assistant-bubble {
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    border-bottom-left-radius: 2px;
   }
 
-  .chat-input-row {
-    padding: 12px 16px;
+  .chat-input-bar {
     display: flex;
-    gap: 8px;
-    background: rgba(0, 0, 0, 0.1);
+    padding: 8px;
+    gap: 6px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.03);
   }
 
   .chat-input {
     flex: 1;
     background: var(--input-bg);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 6px 12px;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 0.72rem;
     color: var(--text-primary);
-    font-size: 0.75rem;
     outline: none;
-    transition: border-color 0.2s ease;
   }
 
-  .chat-input:focus {
-    border-color: var(--accent-color);
-  }
-
-  .btn-chat-send {
+  .btn-send {
     background: var(--accent-color);
-    border: 1px solid var(--border-color);
     color: var(--bg-primary);
+    border: none;
+    border-radius: 5px;
+    padding: 0 10px;
+    font-size: 0.72rem;
     font-weight: 600;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 0.75rem;
     cursor: pointer;
-    transition: background-color 0.2s ease, opacity 0.2s ease;
-  }
-
-  .btn-chat-send:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-
-  .btn-chat-send:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   .spinner-mini {
     display: inline-block;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border: 2px solid rgba(255, 255, 255, 0.3);
     border-radius: 50%;
     border-top-color: #fff;
     animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

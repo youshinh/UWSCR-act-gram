@@ -13,11 +13,22 @@ import (
 
 // ManualStep はマニュアルの各ステップ情報を表します。
 type ManualStep struct {
-	StepNumber  int    `json:"step_number"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	ImagePath   string `json:"image_path"`
-	AudioScript string `json:"audio_script"`
+	StepID        int    `json:"step_id"`
+	StepNumber    int    `json:"step_number"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Instruction   string `json:"instruction"`
+	WindowTitle   string `json:"window_title,omitempty"`
+	TargetElement string `json:"target_element,omitempty"`
+	ActionType    string `json:"action_type,omitempty"`
+	InputValue    string `json:"input_value,omitempty"`
+	ClickX        int    `json:"click_x,omitempty"`
+	ClickY        int    `json:"click_y,omitempty"`
+	RelX          int    `json:"rel_x,omitempty"`
+	RelY          int    `json:"rel_y,omitempty"`
+	UWSCode       string `json:"uws_code,omitempty"`
+	ImagePath     string `json:"image_path"`
+	AudioScript   string `json:"audio_script"`
 }
 
 // GenerateManual はインタラクティブマニュアル（HTML + 画像 + 音声）をフォルダパッケージとして出力します。
@@ -261,16 +272,47 @@ func buildHTMLContent(steps []ManualStep) string {
                 </div>`, step.ImagePath, step.StepNumber)
 		}
 
+		metaBadges := ""
+		if step.WindowTitle != "" || step.TargetElement != "" {
+			metaBadges = `<div class="meta-row" style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">`
+			if step.WindowTitle != "" {
+				metaBadges += fmt.Sprintf(`<span style="font-size:0.75rem; background:rgba(0,0,0,0.05); padding:2px 8px; border-radius:4px; color:var(--text-secondary);">🪟 %s</span>`, step.WindowTitle)
+			}
+			if step.TargetElement != "" {
+				metaBadges += fmt.Sprintf(`<span style="font-size:0.75rem; background:rgba(59,130,246,0.1); color:#2563eb; padding:2px 8px; border-radius:4px;">🎯 %s</span>`, step.TargetElement)
+			}
+			if step.InputValue != "" {
+				metaBadges += fmt.Sprintf(`<span style="font-size:0.75rem; background:rgba(16,185,129,0.1); color:#059669; padding:2px 8px; border-radius:4px;">⌨️ 入力: %s</span>`, step.InputValue)
+			}
+			metaBadges += `</div>`
+		}
+
+		desc := step.Description
+		if desc == "" {
+			desc = step.Instruction
+		}
+
+		codeHTML := ""
+		if step.UWSCode != "" {
+			codeHTML = fmt.Sprintf(`
+                <details class="code-details" style="margin-top:12px; background:rgba(0,0,0,0.03); border:1px solid var(--border-color); border-radius:6px; padding:8px 12px;">
+                    <summary style="font-size:0.8rem; font-weight:600; cursor:pointer; color:var(--text-secondary); user-select:none;">🤖 自動制御スクリプト (UWSCR)</summary>
+                    <pre style="margin-top:8px; padding:8px; background:#1e1e1e; color:#d4d4d4; border-radius:4px; font-size:0.75rem; overflow-x:auto; font-family:Consolas,monospace;"><code>%s</code></pre>
+                </details>`, step.UWSCode)
+		}
+
 		stepsHTML.WriteString(fmt.Sprintf(`
         <div class="step-card">
             <div class="step-header">
                 <span class="step-badge">Step %d</span>
                 <h2>%s</h2>
             </div>
+            %s
             <p class="step-desc">%s</p>
             %s
             %s
-        </div>`, step.StepNumber, step.Title, step.Description, imageHTML, audioHTML))
+            %s
+        </div>`, step.StepNumber, step.Title, metaBadges, desc, imageHTML, codeHTML, audioHTML))
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>

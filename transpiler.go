@@ -119,15 +119,15 @@ func (t *Transpiler) Transpile(script string) (string, error) {
 			}
 
 			if imageExpr != "" {
-				if strings.TrimSpace(imageExpr) == "GetScreenCapture()" {
-					imageExpr = `"temp_ai_cap.png"`
+				trimmed := strings.TrimSpace(imageExpr)
+				if trimmed == "GetScreenCapture()" {
+					imageExpr = `\"temp_ai_cap.png\"`
+				} else if strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`) && len(trimmed) >= 2 {
+					inner := trimmed[1 : len(trimmed)-1]
+					imageExpr = fmt.Sprintf(`\"%s\"`, strings.ReplaceAll(inner, `"`, `\"`))
 				}
 
 				// JSONを文字列として安全に結合し、バックスラッシュを適切にエスケープします
-				// DOSCMD('curl ... -d "{\"prompt\":\"...\"}") のように、JSON内のダブルクォートを \' に変えるか、
-				// 全体を単一引用符で囲む等の工夫がUWSCRでは必要です。
-				
-				// 最終安全策：JSON全体をエスケープして curl に渡す
 				jsonPayload := fmt.Sprintf(`{\"prompt\":\"%s\",\"image_path\":%s}`, escapedPrompt, imageExpr)
 				
 				transpiled := fmt.Sprintf(
