@@ -595,7 +595,7 @@
         </div>
       {/if}
 
-      <div class="tab-content" style={isMiniMode ? "display: none;" : ""}>
+      <div class="tab-content" class:full-width={activeTab === 'manual' || activeTab === 'dev' || activeTab === 'run'} style={isMiniMode ? "display: none;" : ""}>
         <div class="tab-pane" class:hidden={activeTab !== 'home'}>
           <div class="home-grid">
             <button class="home-card" on:click={() => activeTab = 'run'}>
@@ -1319,13 +1319,18 @@
     width: 100%;
     max-width: 1400px;
     margin: 0 auto;
-    padding: 20px 24px;
+    padding: 16px 20px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     min-height: 0;
     height: 100%;
     overflow: hidden;
+  }
+
+  .tab-content.full-width {
+    max-width: 100%;
+    padding: 8px 12px;
   }
 
   .loader-container {
@@ -1580,8 +1585,9 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: stretch;
+    min-height: 0;
   }
 
   /* ミニモード用スタイル */

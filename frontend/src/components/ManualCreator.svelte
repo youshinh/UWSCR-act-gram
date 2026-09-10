@@ -16,6 +16,7 @@
   let isSaving = false;
   let isExporting = false;
   let isTTSPlaying = false;
+  let showCopilot = true; // 業務アシスタントペイン表示切り替え
   let userQuestion = "";
   let chatHistory = [];
   let statusMessage = "";
@@ -410,12 +411,20 @@
         <button class="btn-action btn-accent" on:click={handleExportToDev} disabled={steps.length === 0} title="DEVELOPタブで詳細スクリプト編集">
           シナリオを編集 →
         </button>
+        <button 
+          class="btn-action btn-toggle-copilot" 
+          class:active={showCopilot}
+          on:click={() => showCopilot = !showCopilot} 
+          title={showCopilot ? "業務アシスタントを非表示にしてエディタを広く使う" : "業務アシスタントを表示"}
+        >
+          🤖 {showCopilot ? "アシスタント非表示" : "アシスタント表示"}
+        </button>
       </div>
     </div>
   </header>
 
   <!-- 2. 3ペインメインワークスペース -->
-  <div class="main-workspace-grid">
+  <div class="main-workspace-grid" class:collapsed-copilot={!showCopilot}>
     <!-- 左ペイン: ステップ一覧 (リスト & 並び替え & 追加・削除) -->
     <aside class="steps-sidebar card">
       <div class="sidebar-header">
@@ -444,13 +453,13 @@
                 <span class="step-num-badge">{idx + 1}</span>
               </div>
               <div class="step-item-center">
-                <div class="step-item-title">{s.title || `ステップ ${idx + 1}`}</div>
+                <div class="step-item-title" title={s.title || `ステップ ${idx + 1}`}>{s.title || `ステップ ${idx + 1}`}</div>
                 <div class="step-item-sub">
                   {#if s.window_title}
-                    <span class="sub-tag">🪟 {s.window_title.substring(0, 14)}...</span>
+                    <span class="sub-tag" title={s.window_title}>🪟 {s.window_title.substring(0, 16)}...</span>
                   {/if}
                   {#if s.target_element}
-                    <span class="sub-tag elem-tag">🎯 {s.target_element}</span>
+                    <span class="sub-tag elem-tag" title={s.target_element}>🎯 {s.target_element}</span>
                   {/if}
                 </div>
               </div>
@@ -599,59 +608,61 @@
     </section>
 
     <!-- 右ペイン: 業務アシスタント (AIチャット & RAGナレッジ) -->
-    <aside class="copilot-sidebar card">
-      <div class="copilot-header">
-        <div class="copilot-title-group">
-          <span class="copilot-dot"></span>
-          <h3>業務アシスタント</h3>
+    {#if showCopilot}
+      <aside class="copilot-sidebar card">
+        <div class="copilot-header">
+          <div class="copilot-title-group">
+            <span class="copilot-dot"></span>
+            <h3>業務アシスタント</h3>
+          </div>
+          <button on:click={openRAGFolder} class="btn-knowledge" title="マニュアルや業務仕様書を追加">
+            📂 知識フォルダ
+          </button>
         </div>
-        <button on:click={openRAGFolder} class="btn-knowledge" title="マニュアルや業務仕様書を追加">
-          📂 知識フォルダ
-        </button>
-      </div>
 
-      <div class="rag-info-banner">
-        <b>業務ナレッジ参照中:</b> 知識フォルダ内の仕様書やマニュアルに基づいてAIがアドバイスします。
-      </div>
+        <div class="rag-info-banner">
+          <b>業務ナレッジ参照中:</b> 知識フォルダ内の仕様書やマニュアルに基づいてAIがアドバイスします。
+        </div>
 
-      <div class="chat-messages-container">
-        {#if chatHistory.length === 0}
-          <div class="chat-welcome">
-            <p>この画面の操作手順や入力内容について、AIアシスタントにいつでも質問できます。</p>
-            <div class="quick-questions">
-              <button class="quick-btn" on:click={() => { userQuestion = "現在の操作手順の注意点を教えてください。"; askAI(); }}>
-                注意点を質問
-              </button>
-              <button class="quick-btn" on:click={() => { userQuestion = "この画面での入力値の仕様を教えてください。"; askAI(); }}>
-                入力仕様を質問
-              </button>
+        <div class="chat-messages-container">
+          {#if chatHistory.length === 0}
+            <div class="chat-welcome">
+              <p>この画面の操作手順や入力内容について、AIアシスタントにいつでも質問できます。</p>
+              <div class="quick-questions">
+                <button class="quick-btn" on:click={() => { userQuestion = "現在の操作手順の注意点を教えてください。"; askAI(); }}>
+                  注意点を質問
+                </button>
+                <button class="quick-btn" on:click={() => { userQuestion = "この画面での入力値の仕様を教えてください。"; askAI(); }}>
+                  入力仕様を質問
+                </button>
+              </div>
             </div>
-          </div>
-        {/if}
+          {/if}
 
-        {#each chatHistory as chat}
-          <div class="chat-bubble-row {chat.role === 'user' ? 'user-row' : 'assistant-row'}">
-            <span class="chat-role">{chat.role === 'user' ? 'あなた' : 'AI'}</span>
-            <div class="chat-bubble {chat.role === 'user' ? 'user-bubble' : 'assistant-bubble'}">
-              {chat.text}
+          {#each chatHistory as chat}
+            <div class="chat-bubble-row {chat.role === 'user' ? 'user-row' : 'assistant-row'}">
+              <span class="chat-role">{chat.role === 'user' ? 'あなた' : 'AI'}</span>
+              <div class="chat-bubble {chat.role === 'user' ? 'user-bubble' : 'assistant-bubble'}">
+                {chat.text}
+              </div>
             </div>
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
 
-      <div class="chat-input-bar">
-        <input 
-          type="text" 
-          placeholder="業務手順や仕様について質問..." 
-          class="chat-input"
-          bind:value={userQuestion}
-          on:keydown={(e) => e.key === 'Enter' && askAI()}
-        />
-        <button class="btn-send" on:click={askAI} disabled={!userQuestion.trim()}>
-          送信
-        </button>
-      </div>
-    </aside>
+        <div class="chat-input-bar">
+          <input 
+            type="text" 
+            placeholder="業務手順や仕様について質問..." 
+            class="chat-input"
+            bind:value={userQuestion}
+            on:keydown={(e) => e.key === 'Enter' && askAI()}
+          />
+          <button class="btn-send" on:click={askAI} disabled={!userQuestion.trim()}>
+            送信
+          </button>
+        </div>
+      </aside>
+    {/if}
   </div>
 </div>
 
@@ -659,11 +670,14 @@
   .manual-studio-container {
     display: flex;
     flex-direction: column;
+    width: 100%;
     height: 100%;
-    gap: 12px;
+    flex: 1;
+    min-height: 0;
+    gap: 10px;
     box-sizing: border-box;
     overflow: hidden;
-    padding: 2px;
+    padding: 0;
   }
 
   .card {
@@ -679,16 +693,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 16px;
-    gap: 16px;
+    padding: 8px 12px;
+    gap: 10px;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .top-left {
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex: 1;
+    gap: 8px;
+    flex: 1 1 320px;
+    min-width: 240px;
   }
 
   .header-badge {
@@ -704,10 +720,10 @@
 
   .log-dir-group {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
     flex: 1;
-    max-width: 580px;
+    max-width: 440px;
   }
 
   .path-input {
@@ -715,9 +731,9 @@
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 5px 8px;
     color: var(--text-primary);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     outline: none;
     transition: border-color 0.2s;
   }
@@ -729,31 +745,35 @@
   .top-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .status-toast {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: #10b981;
     background: rgba(16, 185, 129, 0.1);
     border: 1px solid rgba(16, 185, 129, 0.3);
-    padding: 4px 10px;
+    padding: 3px 8px;
     border-radius: 4px;
     font-weight: 500;
   }
 
   .action-btn-group {
     display: flex;
-    gap: 6px;
+    gap: 5px;
+    flex-wrap: wrap;
+    align-items: center;
   }
 
   .btn-primary, .btn-secondary, .btn-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 6px 12px;
-    font-size: 0.75rem;
+    gap: 5px;
+    padding: 5px 10px;
+    font-size: 0.72rem;
     font-weight: 500;
     border-radius: 6px;
     cursor: pointer;
@@ -801,6 +821,12 @@
     font-weight: 600;
   }
 
+  .btn-toggle-copilot.active {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    background: var(--accent-soft);
+  }
+
   button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
@@ -809,11 +835,16 @@
   /* 2. メイン3ペイングリッド */
   .main-workspace-grid {
     display: grid;
-    grid-template-columns: 260px 1fr 280px;
-    gap: 12px;
+    grid-template-columns: 240px minmax(0, 1fr) 280px;
+    gap: 10px;
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    width: 100%;
+  }
+
+  .main-workspace-grid.collapsed-copilot {
+    grid-template-columns: 240px minmax(0, 1fr);
   }
 
   /* 左ペイン: ステップ一覧 */
@@ -930,9 +961,12 @@
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--text-primary);
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.35;
+    word-break: break-all;
   }
 
   .step-item-sub {
@@ -999,24 +1033,29 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
+    height: 100%;
   }
 
   .editor-header-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--border-color);
     background: rgba(0, 0, 0, 0.04);
-    gap: 12px;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .step-identity {
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex: 1;
+    gap: 8px;
+    flex: 1 1 200px;
+    min-width: 0;
   }
 
   .step-tag {
@@ -1028,17 +1067,19 @@
     border-radius: 4px;
     border: 1px solid var(--border-color);
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .step-title-input {
     flex: 1;
-    font-size: 0.9rem;
+    min-width: 0;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-primary);
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    padding: 4px 8px;
+    padding: 4px 6px;
     outline: none;
   }
 
@@ -1050,7 +1091,8 @@
   .editor-header-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
   .btn-tts {
@@ -1069,14 +1111,15 @@
   }
 
   .btn-test-step {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 600;
-    padding: 5px 12px;
+    padding: 5px 10px;
     background: var(--accent-color);
     color: var(--bg-primary);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    white-space: nowrap;
   }
 
   .editor-content-split {
@@ -1085,8 +1128,8 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 12px;
-    gap: 12px;
+    padding: 10px;
+    gap: 10px;
   }
 
   /* 画像プレビュー & マーカー */
@@ -1096,8 +1139,9 @@
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid var(--border-color);
-    min-height: 220px;
-    max-height: 340px;
+    min-height: 200px;
+    flex: 1 1 360px;
+    max-height: 52vh;
     display: flex;
     flex-direction: column;
   }
@@ -1110,6 +1154,7 @@
     justify-content: center;
     overflow: hidden;
     cursor: crosshair;
+    background: #0f172a;
   }
 
   .preview-image {
@@ -1151,11 +1196,15 @@
     font-size: 0.68rem;
     padding: 4px 10px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
+    flex-wrap: wrap;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
   .coord-label {
     font-family: monospace;
     color: #38bdf8;
+    white-space: nowrap;
   }
 
   .empty-preview, .empty-editor {
@@ -1179,25 +1228,30 @@
   .editor-form-box {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .form-row-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 140px;
-    gap: 10px;
+    grid-template-columns: 1fr 1fr 130px;
+    gap: 8px;
   }
 
   .form-field {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
 
   .form-field label, .code-label-row label {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .form-input {
@@ -1208,6 +1262,8 @@
     font-size: 0.75rem;
     color: var(--text-primary);
     outline: none;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .form-input:focus, .form-textarea:focus {
@@ -1218,12 +1274,14 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
 
   .form-field-coord label {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--text-secondary);
+    white-space: nowrap;
   }
 
   .coord-inputs {
@@ -1232,7 +1290,8 @@
   }
 
   .coord-input {
-    width: 60px;
+    width: 100%;
+    max-width: 60px;
     background: var(--input-bg);
     border: 1px solid var(--border-color);
     border-radius: 5px;
@@ -1241,6 +1300,7 @@
     color: var(--text-primary);
     text-align: center;
     outline: none;
+    box-sizing: border-box;
   }
 
   .form-textarea {
@@ -1253,12 +1313,20 @@
     outline: none;
     resize: vertical;
     line-height: 1.4;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .desc-textarea {
+    min-height: 44px;
   }
 
   .code-label-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 
   .code-hint {
@@ -1271,6 +1339,7 @@
     background: #1e1e1e;
     color: #9cdcfe;
     border-color: #333;
+    min-height: 70px;
   }
 
   /* 右ペイン: 業務アシスタント */
